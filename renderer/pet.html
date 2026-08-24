@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>DeepSeek Client</title>
+<style>
+  /* 悬浮宠物窗。
+     收起时是一枚小圆点，点开变成一个快捷输入条。
+
+     窗口本身的尺寸变化是瞬时的（操作系统不给窗口做补间），所以观感全靠内容
+     动画：先把窗口放大到展开尺寸，再让面板从圆点位置缩放淡入。反过来收起时
+     先播退场动画，等它结束主进程才把窗口缩回去 —— 顺序错了就会看到内容还在
+     动、窗口已经切掉一半。 */
+  html, body {
+    margin: 0; height: 100%;
+    background: transparent;
+    overflow: hidden;
+    -webkit-user-select: none; user-select: none;
+    font: 13px/1.5 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  body {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px;
+    box-sizing: border-box;
+    -webkit-app-region: drag;
+  }
+
+  /* ---- 圆点本体 ---- */
+  .pet {
+    flex: none;
+    width: 56px; height: 56px;
+    display: grid; place-items: center;
+    border-radius: 50%;
+    background: rgba(20, 24, 31, 0.92);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.32);
+    transition: transform 160ms ease, box-shadow 160ms ease;
+    cursor: pointer;
+  }
+  /* 悬停轻微抬起。不做夸张弹跳 —— 那种东西第一次好玩，第十次就想卸载。 */
+  body:not(.open) .pet:hover {
+    transform: translateY(-2px) scale(1.04);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.4);
+  }
+
+  svg { display: block; width: 34px; height: 34px; }
+  .back { stroke: #8e96a6; stroke-opacity: 0.45; }
+  .front { stroke: var(--pet-accent, #5b7cff); transition: stroke 240ms ease; }
+
+  /* 运行中：外圈缓慢转动。用旋转而不是闪烁 —— 闪烁在余光里很吵。 */
+  .spin { animation: spin 3.4s linear infinite; transform-origin: 50% 50%; }
+  @keyframes spin { to { transform: rotate(360deg) } }
+  /* 等你处理：呼吸。比旋转更想引起注意，但仍然不刺眼。 */
+  .pulse { animation: pulse 1.5s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.42 } }
+
+  /* ---- 展开的输入面板 ---- */
+  .panel {
+    flex: 1; min-width: 0;
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px;
+    border-radius: 14px;
+    background: rgba(24, 28, 36, 0.96);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.38);
+    /* 收起时不占位也不可点，但保留在 DOM 里，动画才有起止两端。 */
+    opacity: 0;
+    transform: translateX(-14px) scale(0.94);
+    transform-origin: left center;
+    pointer-events: none;
+    transition: opacity 170ms ease, transform 190ms cubic-bezier(.2,.9,.3,1.2);
+    -webkit-app-region: no-drag;
+  }
+  body.open .panel { opacity: 1; transform: none; pointer-events: auto; }
+
+  input {
+    flex: 1; min-width: 0;
+    border: 0; outline: 0; background: transparent;
+    color: #e9ebef; font: inherit;
+    padding: 4px 2px;
+  }
+  input::placeholder { color: #7b828f; }
+
+  .send {
+    flex: none;
+    width: 28px; height: 28px;
+    display: grid; place-items: center;
+    border: 0; border-radius: 50%;
+    background: var(--pet-accent, #5b7cff);
+    color: #fff; cursor: pointer;
+    transition: opacity 140ms ease;
+  }
+  .send:disabled { opacity: 0.35; cursor: default; }
+
+  .hint {
+    position: absolute; left: 76px; bottom: 2px;
+    font-size: 10.5px; color: #6b7280;
+    opacity: 0; transition: opacity 160ms ease;
+    pointer-events: none;
+  }
+  body.open .hint { opacity: 1; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pet, .panel, .send, .hint { transition: none }
+    .spin, .pulse { animation: none }
+  }
+</style>
+</head>
+<body>
+  <div class="pet" id="pet">
+    <svg viewBox="0 0 1024 1024" aria-hidden="true">
+      <mask id="cut">
+        <rect width="1024" height="1024" fill="#fff"/>
+        <circle cx="512" cy="390.5" r="34" fill="#000"/>
+      </mask>
+      <g id="ring">
+        <circle class="back" cx="424" cy="512" r="150" fill="none" stroke-width="34"/>
+        <circle class="front" cx="600" cy="512" r="150" fill="none" stroke-width="44" mask="url(#cut)"/>
+      </g>
+    </svg>
+  </div>
+
+  <div class="panel" id="panel">
+    <input id="input" type="text" placeholder="说点什么…" autocomplete="off" spellcheck="false">
+    <button class="send" id="send" disabled aria-label="发送">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </button>
+  </div>
+  <div class="hint" id="hint">Enter 发送 · Esc 收起</div>
+
+<script>
+  const ACCENT = { idle: '#8e96a6', running: '#5b7cff', attention: '#e08a2b' }
+
+  const body = document.body
+  const pet = document.getElementById('pet')
+  const ring = document.getElementById('ring')
+  const panel = document.getElementById('panel')
+  const input = document.getElementById('input')
+  const send = document.getElementById('send')
+  const hint = document.getElementById('hint')
+
+  let open = false
+
+  // 状态由主进程推送：宠物、托盘、通知看的是同一份状态，不各自推断。
+  window.__dshPetState = (state) => {
+    const color = ACCENT[state] ?? ACCENT.idle
+    document.documentElement.style.setProperty('--pet-accent', color)
+    ring.classList.toggle('spin', state === 'running')
+    ring.classList.toggle('pulse', state === 'attention')
+  }
+
+  /**
+   * 展开与收起。
+   *
+   * 展开：先让主进程把窗口放大（否则面板会被窗口边界切掉），下一帧再加 class
+   * 触发动画 —— 同一帧里改尺寸又改 class，浏览器会把它们合成一次布局，动画
+   * 直接被跳过。
+   *
+   * 收起：先播退场动画，等它结束再请主进程缩窗口。
+   */
+  const setOpen = async (next) => {
+    if (next === open) return
+    open = next
+    if (open) {
+      await window.__dshPet?.resize(true)
+      requestAnimationFrame(() => {
+        body.classList.add('open')
+        input.focus()
+      })
+    } else {
+      body.classList.remove('open')
+      input.value = ''
+      send.disabled = true
+      setTimeout(() => { void window.__dshPet?.resize(false) }, 200)
+    }
+  }
+
+  pet.addEventListener('click', () => { void setOpen(!open) })
+  pet.addEventListener('contextmenu', (e) => { e.preventDefault(); window.__dshPet?.menu() })
+
+  input.addEventListener('input', () => { send.disabled = input.value.trim() === '' })
+
+  const submit = async () => {
+    const text = input.value.trim()
+    if (text === '') return
+    input.value = ''
+    send.disabled = true
+    const result = await window.__dshPet?.ask(text)
+    // 失败要说出来。悄悄吞掉的话，用户只会觉得"我发了但什么都没发生"。
+    if (result && result.ok === false) {
+      hint.textContent = result.error ?? '发送失败'
+      hint.style.color = '#e08a2b'
+      return
+    }
+    void setOpen(false)
+  }
+
+  send.addEventListener('click', () => { void submit() })
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); void submit(); return }
+    if (e.key === 'Escape') { e.preventDefault(); void setOpen(false) }
+  })
+
+  // 失焦即收起：一个浮在所有窗口之上的输入框，点别处之后还张着嘴很碍事。
+  window.addEventListener('blur', () => { if (open) void setOpen(false) })
+</script>
+</body>
+</html>

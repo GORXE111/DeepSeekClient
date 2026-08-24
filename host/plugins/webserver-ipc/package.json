@@ -1,0 +1,15 @@
+{
+  "name": "@dsh-desktop/webserver-ipc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "继承上游 WebServer、只去掉监听的替身：让 client-connection 原样加载到桌面端",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-host-webserver": "*"
+  }
+}

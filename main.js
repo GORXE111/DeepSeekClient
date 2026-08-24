@@ -17,10 +17,11 @@ const path = require('node:path')
 const { randomUUID } = require('node:crypto')
 const fs = require('node:fs')
 const { proxy, unary, openStream } = require('./host/pipe-bridge.js')
-const { installMenu, currentAccent, currentLocale } = require('./host/menu.js')
+const { installMenu, currentAccent, currentLocale, petEnabled, readPrefs, writePrefs } = require('./host/menu.js')
 const { accentById } = require('./host/accents.js')
 const { createNotifier } = require('./host/notifications.js')
 const { createTray } = require('./host/tray.js')
+const { createPet } = require('./host/pet.js')
 
 const DESKTOP = __dirname
 
@@ -61,6 +62,10 @@ const streams = new Map()
 let notifier
 /** @type {ReturnType<typeof createTray> | undefined} */
 let tray
+/** @type {ReturnType<typeof createPet> | undefined} */
+let pet
+/** 最近一次状态。宠物是后开的，开的时候要能立刻显示当前状态而不是从空闲开始。 */
+let agentState = 'idle'
 
 // ---------------------------------------------------------------- harness
 
@@ -318,7 +323,6 @@ if (!app.requestSingleInstanceLock()) {
     if (win.isMinimized()) win.restore()
     win.focus()
   })
-
   app.whenReady().then(async () => {
     try {
       // 语言写进 harness 自己的 locale 设置（namespace 'locale'，字段
@@ -326,7 +330,7 @@ if (!app.requestSingleInstanceLock()) {
       const pushAccent = (id) => {
         if (win !== null && !win.isDestroyed()) win.webContents.send('dsh:accent', accentById(id))
       }
-      installMenu(async (locale) => {
+      const applyLocale = async (locale) => {
         if (pipe === null) throw new Error('后台服务尚未就绪')
         const r = await unary(pipe, {
           path: '/api/settings.update',
@@ -339,12 +343,11 @@ if (!app.requestSingleInstanceLock()) {
         })
         if (r.status !== 200) throw new Error(`settings.update 返回 HTTP ${r.status}`)
         tray?.refresh()
-      }, pushAccent)
-      // 先把窗口开出来（启动画面），再去引导 —— 引导要几秒，那几秒不该是空白。
+      }
       notifier = createNotifier({
         getWindow: () => win,
         getLocale: currentLocale,
-        onState: (state) => { tray?.setState(state) },
+        onState: (state) => { agentState = state; tray?.setState(state); pet?.setState(state) },
       })
       // DSH_NO_TRAY=1 关掉托盘，用于把它从故障范围里排除。
       if (process.env.DSH_NO_TRAY !== '1') tray = createTray({
@@ -354,6 +357,85 @@ if (!app.requestSingleInstanceLock()) {
         onQuit: () => { app.quit() },
       })
 
+      const showMainWindow = () => {
+        if (win === null || win.isDestroyed()) return
+        if (win.isMinimized()) win.restore()
+        win.show()
+        win.focus()
+      }
+      const setPet = (on) => {
+        if (!on) { pet?.destroy(); pet = undefined; return }
+        if (pet !== undefined) return
+        pet = createPet({
+          desktopDir: DESKTOP,
+          getLocale: currentLocale,
+          onActivate: showMainWindow,
+          onDisable: () => {
+            writePrefs({ ...readPrefs(), pet: false })
+            setPet(false)
+            // 菜单上的勾要跟着取消，否则状态与界面对不上。
+            installMenu(applyLocale, pushAccent, setPet)
+          },
+          position: readPrefs().petPosition,
+          onMoved: (pos) => { writePrefs({ ...readPrefs(), petPosition: pos }) },
+        })
+        pet.setState(agentState)
+      }
+      /**
+       * 把一句话发给一个会话。
+       *
+       * 目标会话取最近一个；一个都没有就在第一个工作区里新建。悬浮窗的价值是
+       * "想到就记下"，不该反过来要求用户先去主界面挑一个会话。
+       *
+       * 失败原因原样回给页面 —— 悄悄吞掉的话，用户只会觉得"我发了但什么都没
+       * 发生"，那比报错更糟。
+       */
+      const petAsk = async (text) => {
+        if (pipe === null) return { ok: false, error: '后台服务尚未就绪' }
+        const call = async (method, payload) => {
+          const r = await unary(pipe, {
+            path: `/api/${method}`,
+            body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload }),
+          })
+          if (r.status !== 200) throw new Error(`${method} HTTP ${r.status}`)
+          const parsed = JSON.parse(r.body)
+          if (parsed?.result?.ok !== true) {
+            throw new Error(parsed?.result?.error?.message ?? `${method} 被拒绝`)
+          }
+          return parsed.result.value
+        }
+        try {
+          const list = await call('session.list', {})
+          let sessionId = list?.items?.[0]?.sessionId
+          if (sessionId === undefined) {
+            const spaces = await call('workspace.list', {})
+            const workspaceId = spaces?.items?.[0]?.workspaceId ?? spaces?.workspaces?.[0]?.workspaceId
+            if (workspaceId === undefined) return { ok: false, error: '还没有工作区，请先在主窗口里添加一个' }
+            sessionId = (await call('session.create', { workspaceId }))?.sessionId
+          }
+          if (sessionId === undefined) return { ok: false, error: '没能确定目标会话' }
+          await call('session.prompt', {
+            sessionId,
+            mode: 'queue',
+            content: [{ type: 'text', text }],
+          })
+          showMainWindow()
+          return { ok: true }
+        } catch (err) {
+          return { ok: false, error: String(err && err.message ? err.message : err).slice(0, 120) }
+        }
+      }
+      ipcMain.handle('dsh:pet-resize', (_e, expanded) => { pet?.resize(expanded === true) })
+      ipcMain.handle('dsh:pet-ask', (_e, text) => petAsk(String(text ?? '')))
+      ipcMain.on('dsh:pet-activate', () => { pet?.handleActivate() })
+      ipcMain.on('dsh:pet-menu', () => { pet?.handleMenu() })
+      if (petEnabled()) setPet(true)
+
+      // 菜单要等 setPet 定义之后再装：它把 setPet 作为回调交出去，早一步调用
+      // 会撞上 const 的暂时性死区，整个启动直接抛错。
+      installMenu(applyLocale, pushAccent, setPet)
+
+      // 先把窗口开出来（启动画面），再去引导 —— 引导要几秒，那几秒不该是空白。
       createWindow()
       splashStatus('正在启动后台服务…')
       pipe = await startHarness()
@@ -372,6 +454,7 @@ if (!app.requestSingleInstanceLock()) {
     quitting = true
     for (const close of streams.values()) close()
     streams.clear()
+    pet?.destroy()
     tray?.destroy()
     harness?.postMessage('shutdown')
     harness?.kill()

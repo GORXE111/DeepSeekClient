@@ -1,0 +1,129 @@
+'use strict'
+
+/**
+ * 悬浮宠物窗：一个常驻在桌面上的小圆点，用颜色和动作说明 agent 在干什么。
+ *
+ * 它是托盘状态的"看得见的化身"—— 托盘要你去屏幕角落找，宠物就浮在手边。两者
+ * 共用同一份状态，不各自推断，否则迟早会出现"托盘说在跑、宠物说空闲"。
+ *
+ * **默认关闭**。一个会浮在别人所有窗口之上的东西，不该是装完就自己冒出来的；
+ * 想要的人去菜单里开。
+ *
+ * 位置记在偏好里：每次启动都回到屏幕中央，等于每次都要重新挪一遍。
+ *
+ * @module pet
+ */
+
+const { BrowserWindow, Menu, screen } = require('electron')
+const path = require('node:path')
+
+const SIZE = 72
+/** 展开后的尺寸。够放下一行输入和发送按钮，再宽就开始像个窗口了。 */
+const OPEN_WIDTH = 380
+const OPEN_HEIGHT = 84
+
+const LABELS = {
+  zh: { open: '打开主窗口', off: '关闭宠物模式' },
+  en: { open: 'Open Main Window', off: 'Turn Off Pet Mode' },
+}
+
+/**
+ * @param {object} deps
+ * @param {string} deps.desktopDir 壳的根目录（用来找 renderer/pet.html）
+ * @param {() => 'zh' | 'en'} deps.getLocale
+ * @param {() => void} deps.onActivate 点击宠物时做什么（通常是显示主窗口）
+ * @param {() => void} deps.onDisable 用户从宠物菜单里关掉它
+ * @param {{x: number, y: number} | undefined} deps.position 上次的位置
+ * @param {(pos: {x: number, y: number}) => void} deps.onMoved 位置变化时落盘
+ */
+function createPet({ desktopDir, getLocale, onActivate, onDisable, position, onMoved }) {
+  // 没有记录过位置时放在右下角，离系统托盘近 —— 那里通常也是最空的一块。
+  const fallback = () => {
+    const { workArea } = screen.getPrimaryDisplay()
+    return { x: workArea.x + workArea.width - SIZE - 28, y: workArea.y + workArea.height - SIZE - 96 }
+  }
+  const spot = position ?? fallback()
+
+  const win = new BrowserWindow({
+    width: SIZE,
+    height: SIZE,
+    x: spot.x,
+    y: spot.y,
+    // 透明无边框置顶：这三样缺一个它就不像"浮在桌面上"，而像一个小窗口。
+    frame: false,
+    transparent: true,
+    resizable: false,
+    alwaysOnTop: true,
+    // 不进任务栏：它是常驻装饰，不是一个你会去 Alt+Tab 切换的窗口。
+    skipTaskbar: true,
+    // 不抢焦点：点它之前你正在做的事不该被打断。
+    focusable: false,
+    hasShadow: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      preload: path.join(desktopDir, 'host', 'pet-preload.js'),
+    },
+  })
+
+  // 全屏应用之上也要看得见 —— 否则你一进全屏它就等于不存在。
+  win.setAlwaysOnTop(true, 'floating')
+  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+
+  void win.loadFile(path.join(desktopDir, 'renderer', 'pet.html'))
+
+  // 拖完才落盘：拖动过程中每一帧都写文件毫无意义。
+  win.on('moved', () => {
+    if (win.isDestroyed()) return
+    const [x, y] = win.getPosition()
+    onMoved({ x, y })
+  })
+
+  const showMenu = () => {
+    const t = LABELS[getLocale()] ?? LABELS.en
+    Menu.buildFromTemplate([
+      { label: t.open, click: onActivate },
+      { type: 'separator' },
+      { label: t.off, click: onDisable },
+    ]).popup({ window: win })
+  }
+
+  return {
+    /**
+     * 展开或收起。
+     *
+     * 窗口尺寸变化是瞬时的（系统不给窗口补间），观感全靠页面里的内容动画，
+     * 所以顺序有讲究：展开先放大窗口再播进场，收起先播退场再缩窗口。
+     *
+     * focusable 跟着切换：收起时为 false，点它之前你正在做的事不该被打断；
+     * 展开时必须为 true，否则输入框拿不到焦点，打不了字。
+     */
+    resize: (expanded) => {
+      if (win.isDestroyed()) return
+      const [x, y] = win.getPosition()
+      win.setFocusable(expanded)
+      win.setBounds({
+        x, y,
+        width: expanded ? OPEN_WIDTH : SIZE,
+        height: expanded ? OPEN_HEIGHT : SIZE,
+      })
+      if (expanded) win.focus()
+    },
+
+    /** 推一个状态过去；窗口没了就静默忽略。 */
+    setState: (state) => {
+      if (win.isDestroyed()) return
+      void win.webContents.executeJavaScript(
+        `window.__dshPetState?.(${JSON.stringify(state)})`,
+      ).catch(() => { /* 页面还没加载完 */ })
+    },
+    handleActivate: onActivate,
+    handleMenu: showMenu,
+    /** 渲染进程的 IPC 要认得出是哪个窗口发来的。 */
+    ownsWebContents: (contents) => !win.isDestroyed() && contents === win.webContents,
+    destroy: () => { if (!win.isDestroyed()) win.destroy() },
+  }
+}
+
+module.exports = { createPet }

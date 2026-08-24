@@ -30,7 +30,6 @@ files:
   - desktop.patch.yml
   - host/**/*
   - renderer/**/*
-  - packages/**/*
   - package.json
   - '!**/node_modules/.bin'
   - '!probe*/**'

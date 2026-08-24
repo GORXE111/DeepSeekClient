@@ -95,12 +95,39 @@ function pipePath() {
  * 复制而不是链接：链接在跨平台与打包解压时行为不一致，而这个包只有百来行。
  * 每次启动都覆盖一遍，这样升级壳之后 profile 里不会留着旧版本的替身。
  */
+/**
+ * 判断一个目录项是不是 Windows 的 junction / 重解析点。
+ * Node 没有直接的 API，但 readlink 对普通目录会抛 EINVAL，对 junction 会返回
+ * 目标路径 —— 这个差异就是判据。
+ */
+function isJunction(p) {
+  try { fsSync.readlinkSync(p); return true } catch { return false }
+}
+
 function installStubIntoProfile(dshHome) {
-  const source = path.join(DESKTOP, 'packages', 'webserver-ipc')
+  // 放在 host/plugins 而不是 packages/：后者这个名字在 npm 生态里有特殊含义，
+  // 实测会被安装流程连源码一起清掉，排查代价远大于换个目录名。
+  const source = path.join(DESKTOP, 'host', 'plugins', 'webserver-ipc')
   if (!fsSync.existsSync(source)) throw new Error(`找不到替身包：${source}`)
   const targetDir = path.join(dshHome, 'profiles', 'node_modules', '@dsh-desktop')
   const target = path.join(targetDir, 'webserver-ipc')
-  fsSync.rmSync(target, { recursive: true, force: true })
+
+  // 递归删除之前先确认目标不是链接。
+  //
+  // 这里踩过一次很贵的坑：开发期在 profiles/node_modules 下建过一条指向本仓库
+  // packages/ 的 junction，而这句 rmSync 穿过它，把源码目录整个删掉了 ——
+  // 现象是"源文件莫名消失"，一度被误判成 npm 的行为。Windows 的 junction 对
+  // fs 是透明的，recursive 删除会走到目标里去。
+  //
+  // 所以先看这一层是不是链接：是就只摘链接本身，绝不递归。
+  for (const p of [target, targetDir]) {
+    const stat = fsSync.lstatSync(p, { throwIfNoEntry: false })
+    if (stat === undefined) continue
+    if (stat.isSymbolicLink() || stat.isDirectory() === false) { fsSync.unlinkSync(p); continue }
+    // Windows 的 junction 在 lstat 下报成目录，要靠 reparse 点判断。
+    if ((stat.mode & 0o170000) === 0o040000 && isJunction(p)) { fsSync.rmdirSync(p); continue }
+    if (p === target) fsSync.rmSync(p, { recursive: true, force: true })
+  }
   fsSync.mkdirSync(targetDir, { recursive: true })
   fsSync.cpSync(source, target, {
     recursive: true,
@@ -168,8 +195,8 @@ async function main() {
 
   say('ready', {
     pipe,
-    routes: stub.routes.map((r) => `${r.kind}:${r.path}`),
-    upgrades: [...stub.upgrades.keys()],
+    routes: stub.capturedRoutes,
+    upgrades: stub.capturedUpgrades,
   })
 
   process.parentPort.on('message', (e) => {

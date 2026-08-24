@@ -16,7 +16,6 @@
     "bin",
     "host",
     "renderer",
-    "packages",
     "build/icon.png",
     "main.js",
     "preload.js",

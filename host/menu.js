@@ -59,6 +59,7 @@ const STRINGS = {
     undo: '撤销', redo: '重做', cut: '剪切', copy: '复制', paste: '粘贴', selectAll: '全选',
     language: '语言', chinese: '简体中文', english: 'English',
     appearance: '强调色',
+    pet: '宠物模式',
     about: '关于 DeepSeek Client', services: '服务',
     hide: '隐藏', hideOthers: '隐藏其他', unhide: '全部显示', quit: '退出',
     restartHint: '菜单语言已切换，但界面语言没能同步。',
@@ -69,6 +70,7 @@ const STRINGS = {
     undo: 'Undo', redo: 'Redo', cut: 'Cut', copy: 'Copy', paste: 'Paste', selectAll: 'Select All',
     language: 'Language', chinese: '简体中文', english: 'English',
     appearance: 'Accent',
+    pet: 'Pet Mode',
     about: 'About DeepSeek Client', services: 'Services',
     hide: 'Hide', hideOthers: 'Hide Others', unhide: 'Show All', quit: 'Quit',
     restartHint: 'The menu language changed, but the interface language could not be synced.',
@@ -86,7 +88,11 @@ function currentAccent() {
   return accentById(readPrefs().accent).id
 }
 
-function installMenu(applyLocale, applyAccent) {
+function petEnabled() {
+  return readPrefs().pet === true
+}
+
+function installMenu(applyLocale, applyAccent, togglePet) {
   const locale = currentLocale()
   const t = STRINGS[locale]
   const mac = process.platform === 'darwin'
@@ -96,13 +102,13 @@ function installMenu(applyLocale, applyAccent) {
       label: t.chinese,
       type: 'radio',
       checked: locale === 'zh',
-      click: () => { switchLocale('zh', applyLocale, applyAccent) },
+      click: () => { switchLocale('zh', applyLocale, applyAccent, togglePet) },
     },
     {
       label: t.english,
       type: 'radio',
       checked: locale === 'en',
-      click: () => { switchLocale('en', applyLocale, applyAccent) },
+      click: () => { switchLocale('en', applyLocale, applyAccent, togglePet) },
     },
   ]
 
@@ -114,10 +120,21 @@ function installMenu(applyLocale, applyAccent) {
     checked: accent === a.id,
     click: () => {
       writePrefs({ ...readPrefs(), accent: a.id })
-      installMenu(applyLocale, applyAccent)
+      installMenu(applyLocale, applyAccent, togglePet)
       applyAccent?.(a.id)
     },
   }))
+
+  // 宠物模式默认关闭：一个会浮在别人所有窗口之上的东西，不该装完就自己冒出来。
+  const petItem = {
+    label: t.pet,
+    type: 'checkbox',
+    checked: petEnabled(),
+    click: (item) => {
+      writePrefs({ ...readPrefs(), pet: item.checked })
+      togglePet?.(item.checked)
+    },
+  }
 
   /** @type {Electron.MenuItemConstructorOptions[]} */
   const template = []
@@ -131,6 +148,7 @@ function installMenu(applyLocale, applyAccent) {
         { type: 'separator' },
         { label: t.language, submenu: languageSubmenu },
         { label: t.appearance, submenu: appearanceSubmenu },
+        petItem,
         { type: 'separator' },
         { label: t.services, role: 'services' },
         { type: 'separator' },
@@ -163,7 +181,7 @@ function installMenu(applyLocale, applyAccent) {
     template.push({ label: t.language, submenu: languageSubmenu })
     template.push({
       label: t.appearance,
-      submenu: [...appearanceSubmenu, { type: 'separator' }, { label: t.quit, role: 'quit' }],
+      submenu: [...appearanceSubmenu, { type: 'separator' }, petItem, { type: 'separator' }, { label: t.quit, role: 'quit' }],
     })
   }
 
@@ -180,10 +198,10 @@ function installMenu(applyLocale, applyAccent) {
  * 早先这里只换菜单文字并提示重启 —— 那等于给用户两个语言开关，其中一个还不
  * 管用。发现上游已有之后就没有理由那么做了。
  */
-function switchLocale(next, applyLocale, applyAccent) {
+function switchLocale(next, applyLocale, applyAccent, togglePet) {
   if (currentLocale() === next) return
   writePrefs({ ...readPrefs(), locale: next })
-  installMenu(applyLocale, applyAccent)
+  installMenu(applyLocale, applyAccent, togglePet)
   Promise.resolve(applyLocale?.(next)).catch((err) => {
     // 界面没跟着变的话要说出来，否则用户只会觉得"点了没用"。
     void dialog.showMessageBox({
@@ -195,4 +213,4 @@ function switchLocale(next, applyLocale, applyAccent) {
   })
 }
 
-module.exports = { installMenu, currentLocale, currentAccent, STRINGS }
+module.exports = { installMenu, currentLocale, currentAccent, petEnabled, readPrefs, writePrefs, STRINGS }
