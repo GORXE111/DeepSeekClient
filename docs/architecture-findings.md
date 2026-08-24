@@ -94,14 +94,40 @@ res: writeHead, write, end, on/once/off, writableEnded
 
 目前按内容特征识别门面块（只做一次再导出的那个）。**产品里应改成打包时固化，而不是运行时猜。**
 
-## 未决
+## 9. 替身方案已跑通到"路由捕获"
 
-替身接入后引导不完成。已知：
+带替身引导 **成功完成**，且上游把真正的路由注册了进来：
 
-- 替身模块求值、构造函数、`init` 全部执行（有信标为证）
-- 事件循环健康（独立心跳全程 3s 一跳，跑到 90s+ 仍正常）
-- 无 unhandledRejection / uncaughtException
-- 但引导所在的 async 链条里，`await sleep(500)` 的续体不再执行 —— 同一事件循环上 `setInterval` 回调却照跑
-- 已排除：不是 profile 安装（`app-boot/src/profile.ts` 里没有 spawnSync/install）；不是 `cordis-plugin-timer` 接管全局定时器（改用引导前抓取的原始 `setTimeout` 后现象不变）
+```
+路由表   = [prefix:/plugins | exact:/plugins/events | prefix:/api]
+fallback = 已注册
+```
 
-"定时器能跑但 await 续体不跑"这个组合尚未解释。下一步建议从上游 `WebServer` 的 `[Service.init]` 完整契约入手，逐字段比对替身缺了什么，而不是继续从外部试探。
+`/api/...` 匹配到的是具名路由而非 fallback。**零 fork 的核心假设至此被证实。**
+
+同一次引导内，两条对照都正常：
+
+| 路径 | 结果 |
+|---|---|
+| 直连 `toFetchHandler(ctx.apiProxy)` | HTTP 200 |
+| `ctx.connection.createSharedFetchHandler('/api', …)` | HTTP 200 |
+
+所以引导健康、apiProxy 健全、共享处理器工作正常。
+
+## 未决：伪造的 req/res 驱动上游路由处理器时挂住
+
+把上游捕获到的 `route.handler(req, res)` 用伪造的 node 对象喂进去，会停在一个精确的位置：
+
+```
+调用 route.handler  →  req.destroy()  →  （再无任何输出）
+```
+
+`req.destroy()` 来自 `for await (const chunk of req)` 结束时异步迭代器的清理，说明**请求体已完整读完**；而 `res.writeHead` / `write` / `end` 一个都没被调用，说明**响应一个字节都没产生**。中间只剩 `await apiHandler.fetch(request)` 这一步。
+
+已排除的方向：
+
+- **不是具体方法**：`host.describe` 与 `settings.describe` 表现一致（后者还是特权方法，走的判定分支不同）
+- **不是 Request 的形状**：把 `bridge` 与手写版的三处差异（`dsh.internal` 基址、`content-length` 头、`signal`）逐个加回去做了四个变体，**全部返回 200**
+- **不是引导状态**：上面两条对照在同一次引导里都是 200
+
+下一步建议不要再从外部试探，改为对比法：用**真实的 node http 请求**打同一个捕获到的 handler（临时起一个本地 server 把 req/res 转过去），与伪造对象逐字段 diff。嫌疑最大的是伪造的 `req` 只是个 `Readable`，缺少 `IncomingMessage` 的某些成员（如 `socket`、`aborted`、`complete`），而 `bridge` 之外的某一层读到了它们。
