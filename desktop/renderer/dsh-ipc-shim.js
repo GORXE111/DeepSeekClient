@@ -140,9 +140,21 @@
     :root { --dsh-titlebar-h: ${titlebarHeight}px; }
 
     /* 应用根节点让出标题栏的高度。上游按 100vh 铺满，不减掉这一段的话
-       底部会被顶出视口，出现一条永远滚不到的溢出。 */
-    body { padding-top: var(--dsh-titlebar-h) !important; }
-    #root { height: calc(100vh - var(--dsh-titlebar-h)) !important; }
+       底部会被顶出视口，出现一条永远滚不到的溢出。
+
+       整页必须锁死，只允许应用内部的面板滚动。让出的这 36px 若按 content-box
+       计算，会把文档撑得比视口正好高出一个标题栏 —— 于是整页多出 36px 可滚
+       余量，一滑，应用头部就滑到标题栏底下，与 Windows 的窗口按钮叠在一起。
+       症状是"Session log 按钮和最小化/关闭撞了"，看上去像布局错位，实际是整页
+       在滚。border-box + overflow:hidden 把这段余量从根上消掉。 */
+    html { height: 100%; }
+    body {
+      box-sizing: border-box !important;
+      height: 100% !important;
+      overflow: hidden !important;
+      padding-top: var(--dsh-titlebar-h) !important;
+    }
+    #root { height: 100% !important; }
 
     .dsh-titlebar {
       position: fixed; top: 0; left: 0; right: 0;

@@ -201,6 +201,7 @@ export function buildBackdropCss(selection: string, opacity: number): string {
   const dark = preset?.dark ?? custom
   if (light === undefined || dark === undefined) return ''
   const strength = Math.min(CHAT_OPACITY_MAX, Math.max(CHAT_OPACITY_MIN, opacity))
+
   return [
     '[data-conversation-root] { position: relative; }',
     '[data-conversation-root]::before {',
@@ -215,5 +216,13 @@ export function buildBackdropCss(selection: string, opacity: number): string {
     `body[data-ds-dark-theme] [data-conversation-root]::before { background: ${dark}; }`,
     // 内容要压在背景之上，否则会被伪元素盖住。
     '[data-conversation-root] > * { position: relative; z-index: 1; }',
+
+    // 输入框座自带一层"输入遮罩"：从透明淡入到**纯底色**，用来把滚到它下面的
+    // 消息挡住。那段纯色会把壁纸一起盖掉，于是输入框那一带出现一条突兀的色带。
+    //
+    // 选了背景就把遮罩整个透明掉，让壁纸连成一片。代价是滚动时消息会从输入卡片
+    // 四周的空隙里淡淡透出来 —— 这是明知的取舍：背景本就是装饰，断成两截比透出
+    // 一点更难看。没选背景时这条规则不生成，上游的遮罩原样保留。
+    '[data-conversation-root] [data-composer-seat] { background: transparent !important; }',
   ].join('\n')
 }

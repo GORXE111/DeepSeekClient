@@ -334,6 +334,17 @@ function createWindow() {
     }
   })
 
+  // 开发者工具走快捷键，不进工具栏：排查界面问题时它是必需的，但对着它做日常
+  // 使用的人不该看见入口。F12 与 Ctrl/Cmd+Shift+I 都收，两种习惯都照顾到。
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    const toggle = input.key === 'F12'
+      || ((input.control || input.meta) && input.shift && input.key.toLowerCase() === 'i')
+    if (!toggle) return
+    event.preventDefault()
+    win?.webContents.toggleDevTools()
+  })
+
   // 先上启动画面；harness 就绪后由 showApp() 换成真正的界面。
   void win.loadFile(path.join(DESKTOP, 'renderer', 'splash.html'))
 }
