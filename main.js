@@ -17,8 +17,10 @@ const path = require('node:path')
 const { randomUUID } = require('node:crypto')
 const fs = require('node:fs')
 const { proxy, unary, openStream } = require('./host/pipe-bridge.js')
-const { installMenu, currentAccent } = require('./host/menu.js')
+const { installMenu, currentAccent, currentLocale } = require('./host/menu.js')
 const { accentById } = require('./host/accents.js')
+const { createNotifier } = require('./host/notifications.js')
+const { createTray } = require('./host/tray.js')
 
 const DESKTOP = __dirname
 
@@ -54,6 +56,11 @@ let quitting = false
 
 /** 每条下行流的关闭句柄，按渲染侧生成的 id 索引。 */
 const streams = new Map()
+
+/** @type {ReturnType<typeof createNotifier> | undefined} */
+let notifier
+/** @type {ReturnType<typeof createTray> | undefined} */
+let tray
 
 // ---------------------------------------------------------------- harness
 
@@ -202,7 +209,12 @@ function registerBridge() {
     }
     const close = openStream(pipe, req.path, {
       onOpen: () => send('dsh:stream-open'),
-      onFrame: (text) => send('dsh:stream-frame', text),
+      onFrame: (text) => {
+        send('dsh:stream-frame', text)
+        // 顺带旁听：通知与托盘状态都来自同一批帧，不必再开一条流。
+        // 放在转发之后 —— 界面拿到数据的时机不该被通知逻辑拖慢。
+        try { notifier?.observe(text) } catch { /* 通知是附加价值，不能影响载体 */ }
+      },
       onClose: () => { streams.delete(id); send('dsh:stream-close') },
     })
     streams.set(id, close)
@@ -254,6 +266,8 @@ function createWindow() {
   // 页面会把 document.title 写成自己的构建名（"DSH Local Build"）。那是上游
   // 前端的品牌，不是这个产品的名字 —— 拦下它，标题栏由壳决定。
   win.on('page-title-updated', (event) => { event.preventDefault() })
+  // 回到窗口就说明你已经看见了，托盘上的"等待处理"该消掉。
+  win.on('focus', () => { notifier?.clearAttention() })
   win.on('closed', () => { win = null })
 
   // 这个窗口是应用，不是通用浏览器：外链交给系统浏览器，站内导航不得离开 dist。
@@ -324,8 +338,22 @@ if (!app.requestSingleInstanceLock()) {
           }),
         })
         if (r.status !== 200) throw new Error(`settings.update 返回 HTTP ${r.status}`)
+        tray?.refresh()
       }, pushAccent)
       // 先把窗口开出来（启动画面），再去引导 —— 引导要几秒，那几秒不该是空白。
+      notifier = createNotifier({
+        getWindow: () => win,
+        getLocale: currentLocale,
+        onState: (state) => { tray?.setState(state) },
+      })
+      // DSH_NO_TRAY=1 关掉托盘，用于把它从故障范围里排除。
+      if (process.env.DSH_NO_TRAY !== '1') tray = createTray({
+        iconDir: path.join(DESKTOP, 'build'),
+        getWindow: () => win,
+        getLocale: currentLocale,
+        onQuit: () => { app.quit() },
+      })
+
       createWindow()
       splashStatus('正在启动后台服务…')
       pipe = await startHarness()
@@ -344,6 +372,7 @@ if (!app.requestSingleInstanceLock()) {
     quitting = true
     for (const close of streams.values()) close()
     streams.clear()
+    tray?.destroy()
     harness?.postMessage('shutdown')
     harness?.kill()
   })
