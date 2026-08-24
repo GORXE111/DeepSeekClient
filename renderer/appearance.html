@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>外观</title>
+<style>
+  /* 外观面板。
+     每一次改动立刻应用到主窗口 —— 外观是看着调的，"改完点确定再看效果"
+     等于让人盲选。所以没有确定按钮，只有一个还原。 */
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 22px 24px 26px;
+    font: 13px/1.6 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    background: Canvas; color: CanvasText;
+    -webkit-user-select: none; user-select: none;
+  }
+  h2 {
+    font-size: 12px; font-weight: 600; margin: 0 0 10px;
+    letter-spacing: .06em; text-transform: uppercase;
+    color: color-mix(in srgb, CanvasText 45%, transparent);
+  }
+  section + section { margin-top: 26px; }
+
+  .themes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .theme {
+    display: flex; flex-direction: column; align-items: center; gap: 7px;
+    padding: 12px 6px 10px;
+    border: 1.5px solid color-mix(in srgb, CanvasText 14%, transparent);
+    border-radius: 9px; cursor: pointer; background: none; color: inherit;
+    font: inherit;
+    transition: border-color 140ms ease, transform 140ms ease;
+  }
+  .theme:hover { transform: translateY(-1px); }
+  .theme[aria-pressed="true"] { border-color: var(--pick, #5b7cff); }
+  .swatch {
+    width: 30px; height: 30px; border-radius: 50%;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.12);
+  }
+  .theme span { font-size: 12px; }
+
+  .row { display: flex; align-items: center; gap: 12px; }
+  .row + .row { margin-top: 12px; }
+  .row label { flex: 1; }
+  input[type="color"] {
+    width: 44px; height: 28px; padding: 0; border: 0; background: none; cursor: pointer;
+  }
+  input[type="range"] { width: 150px; }
+  select, button.action {
+    font: inherit; padding: 5px 10px; border-radius: 7px;
+    border: 1px solid color-mix(in srgb, CanvasText 22%, transparent);
+    background: color-mix(in srgb, CanvasText 5%, Canvas); color: inherit; cursor: pointer;
+  }
+  .hint {
+    font-size: 11.5px; margin-top: 6px;
+    color: color-mix(in srgb, CanvasText 45%, transparent);
+  }
+  .file {
+    flex: 1; min-width: 0; font-size: 11.5px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl;
+    color: color-mix(in srgb, CanvasText 55%, transparent);
+  }
+  footer { margin-top: 26px; display: flex; justify-content: flex-end; }
+  button.reset {
+    font: inherit; padding: 6px 14px; border-radius: 7px; cursor: pointer;
+    border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+    background: none; color: inherit;
+  }
+</style>
+</head>
+<body>
+  <section>
+    <h2 id="t-theme">主题</h2>
+    <div class="themes" id="themes"></div>
+  </section>
+
+  <section>
+    <h2 id="t-accent">强调色</h2>
+    <div class="row">
+      <label id="t-accent-label">自定义颜色</label>
+      <input type="color" id="accent" value="#5b7cff">
+      <button class="action" id="accent-clear">跟随主题</button>
+    </div>
+    <div class="hint" id="t-accent-hint">强调色独立于主题：可以用森绿的底配紫色的按钮。</div>
+  </section>
+
+  <section>
+    <h2 id="t-chat">聊天背景</h2>
+    <div class="row">
+      <label id="t-chat-kind">类型</label>
+      <select id="chat-kind">
+        <option value="none">无</option>
+        <option value="color">纯色</option>
+        <option value="image">图片</option>
+      </select>
+    </div>
+    <div class="row" id="row-color" hidden>
+      <label id="t-chat-color">颜色</label>
+      <input type="color" id="chat-color" value="#5b7cff">
+    </div>
+    <div class="row" id="row-image" hidden>
+      <label id="t-chat-image">图片</label>
+      <span class="file" id="chat-file">—</span>
+      <button class="action" id="chat-pick">选择…</button>
+    </div>
+    <div class="row" id="row-opacity" hidden>
+      <label id="t-chat-opacity">浓度</label>
+      <input type="range" id="chat-opacity" min="0.04" max="0.45" step="0.01" value="0.18">
+    </div>
+    <div class="hint" id="t-chat-hint">浓度上限做了限制：背景压过文字就不是装饰而是障碍。</div>
+  </section>
+
+  <footer><button class="reset" id="reset">还原默认</button></footer>
+
+<script>
+  const api = window.__dshAppearance
+  const $ = (id) => document.getElementById(id)
+
+  const I18N = {
+    zh: { theme:'主题', accent:'强调色', accentLabel:'自定义颜色', follow:'跟随主题',
+      accentHint:'强调色独立于主题：可以用森绿的底配紫色的按钮。',
+      chat:'聊天背景', kind:'类型', none:'无', color:'纯色', image:'图片',
+      colorLabel:'颜色', imageLabel:'图片', pick:'选择…', opacity:'浓度',
+      chatHint:'浓度上限做了限制：背景压过文字就不是装饰而是障碍。', reset:'还原默认', title:'外观' },
+    en: { theme:'Theme', accent:'Accent', accentLabel:'Custom color', follow:'Follow theme',
+      accentHint:'The accent is independent of the theme — forest ground with a violet button is fine.',
+      chat:'Chat background', kind:'Type', none:'None', color:'Solid', image:'Image',
+      colorLabel:'Color', imageLabel:'Image', pick:'Choose…', opacity:'Strength',
+      chatHint:'Strength is capped: a background that overpowers the text stops being decoration.',
+      reset:'Reset', title:'Appearance' },
+  }
+
+  let state = { theme: 'default', accentColor: null, chatBackground: { kind: 'none', opacity: 0.18 } }
+  let themes = []
+  let locale = 'zh'
+
+  const push = () => { api?.update(state) }
+
+  const renderThemes = () => {
+    const box = $('themes')
+    box.textContent = ''
+    for (const t of themes) {
+      const b = document.createElement('button')
+      b.className = 'theme'
+      b.type = 'button'
+      b.setAttribute('aria-pressed', String(state.theme === t.id))
+      b.style.setProperty('--pick', t.swatch)
+      const sw = document.createElement('span')
+      sw.className = 'swatch'
+      sw.style.background = t.swatch
+      const name = document.createElement('span')
+      name.textContent = locale === 'zh' ? t.zh : t.en
+      b.append(sw, name)
+      b.addEventListener('click', () => { state.theme = t.id; renderThemes(); push() })
+      box.append(b)
+    }
+  }
+
+  const renderChat = () => {
+    const kind = state.chatBackground?.kind ?? 'none'
+    $('chat-kind').value = kind
+    $('row-color').hidden = kind !== 'color'
+    $('row-image').hidden = kind !== 'image'
+    $('row-opacity').hidden = kind === 'none'
+    if (kind === 'color') $('chat-color').value = state.chatBackground.value ?? '#5b7cff'
+    if (kind === 'image') $('chat-file').textContent = state.chatBackground.value ?? '—'
+    $('chat-opacity').value = String(state.chatBackground?.opacity ?? 0.18)
+  }
+
+  const applyLocale = () => {
+    const t = I18N[locale] ?? I18N.en
+    document.title = t.title
+    $('t-theme').textContent = t.theme
+    $('t-accent').textContent = t.accent
+    $('t-accent-label').textContent = t.accentLabel
+    $('accent-clear').textContent = t.follow
+    $('t-accent-hint').textContent = t.accentHint
+    $('t-chat').textContent = t.chat
+    $('t-chat-kind').textContent = t.kind
+    $('t-chat-color').textContent = t.colorLabel
+    $('t-chat-image').textContent = t.imageLabel
+    $('chat-pick').textContent = t.pick
+    $('t-chat-opacity').textContent = t.opacity
+    $('t-chat-hint').textContent = t.chatHint
+    $('reset').textContent = t.reset
+    const sel = $('chat-kind')
+    sel.options[0].textContent = t.none
+    sel.options[1].textContent = t.color
+    sel.options[2].textContent = t.image
+  }
+
+  $('accent').addEventListener('input', (e) => { state.accentColor = e.target.value; push() })
+  $('accent-clear').addEventListener('click', () => { state.accentColor = null; push() })
+
+  $('chat-kind').addEventListener('change', (e) => {
+    const kind = e.target.value
+    state.chatBackground = kind === 'none'
+      ? { kind: 'none' }
+      : { kind, value: state.chatBackground?.value ?? (kind === 'color' ? '#5b7cff' : ''), opacity: state.chatBackground?.opacity ?? 0.18 }
+    renderChat(); push()
+  })
+  $('chat-color').addEventListener('input', (e) => {
+    state.chatBackground = { ...state.chatBackground, kind: 'color', value: e.target.value }
+    push()
+  })
+  $('chat-opacity').addEventListener('input', (e) => {
+    state.chatBackground = { ...state.chatBackground, opacity: Number(e.target.value) }
+    push()
+  })
+  $('chat-pick').addEventListener('click', async () => {
+    const file = await api?.pickImage()
+    if (typeof file !== 'string' || file === '') return
+    state.chatBackground = { ...state.chatBackground, kind: 'image', value: file }
+    renderChat(); push()
+  })
+  $('reset').addEventListener('click', () => {
+    state = { theme: 'default', accentColor: null, chatBackground: { kind: 'none', opacity: 0.18 } }
+    renderThemes(); renderChat(); push()
+  })
+
+  // 初始状态由主进程给：面板打开时要显示当前实际生效的外观，不是一份默认值。
+  api?.init().then((data) => {
+    themes = data.themes
+    locale = data.locale
+    state = { theme: data.theme, accentColor: data.accentColor, chatBackground: data.chatBackground }
+    applyLocale(); renderThemes(); renderChat()
+    if (typeof state.accentColor === 'string') $('accent').value = state.accentColor
+  })
+</script>
+</body>
+</html>

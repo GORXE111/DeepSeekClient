@@ -17,14 +17,19 @@
 const { BrowserWindow, Menu, screen } = require('electron')
 const path = require('node:path')
 
-const SIZE = 72
-/** 展开后的尺寸。够放下一行输入和发送按钮，再宽就开始像个窗口了。 */
-const OPEN_WIDTH = 380
-const OPEN_HEIGHT = 84
+/**
+ * 三档尺寸。窗口永远贴着当前可见内容，不留透明余量 —— 透明区域一样会拦住
+ * 下面的点击，而绕开它要靠 setIgnoreMouseEvents 加逐帧命中测试，复杂且容易漏。
+ */
+const BOUNDS = {
+  idle: { width: 144, height: 112 },
+  bubble: { width: 380, height: 112 },
+  open: { width: 480, height: 112 },
+}
 
 const LABELS = {
-  zh: { open: '打开主窗口', off: '关闭宠物模式' },
-  en: { open: 'Open Main Window', off: 'Turn Off Pet Mode' },
+  zh: { open: '打开主窗口', fresh: '开一个新话题' },
+  en: { open: 'Open Main Window', fresh: 'Start a New Topic' },
 }
 
 /**
@@ -32,21 +37,22 @@ const LABELS = {
  * @param {string} deps.desktopDir 壳的根目录（用来找 renderer/pet.html）
  * @param {() => 'zh' | 'en'} deps.getLocale
  * @param {() => void} deps.onActivate 点击宠物时做什么（通常是显示主窗口）
- * @param {() => void} deps.onDisable 用户从宠物菜单里关掉它
+ * @param {() => void} deps.onFreshTopic 在宠物专属工作区里另起一个会话
  * @param {{x: number, y: number} | undefined} deps.position 上次的位置
  * @param {(pos: {x: number, y: number}) => void} deps.onMoved 位置变化时落盘
  */
-function createPet({ desktopDir, getLocale, onActivate, onDisable, position, onMoved }) {
+function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, onMoved }) {
   // 没有记录过位置时放在右下角，离系统托盘近 —— 那里通常也是最空的一块。
   const fallback = () => {
     const { workArea } = screen.getPrimaryDisplay()
-    return { x: workArea.x + workArea.width - SIZE - 28, y: workArea.y + workArea.height - SIZE - 96 }
+    const s = BOUNDS.idle.width
+    return { x: workArea.x + workArea.width - s - 28, y: workArea.y + workArea.height - s - 96 }
   }
   const spot = position ?? fallback()
 
   const win = new BrowserWindow({
-    width: SIZE,
-    height: SIZE,
+    width: BOUNDS.idle.width,
+    height: BOUNDS.idle.height,
     x: spot.x,
     y: spot.y,
     // 透明无边框置顶：这三样缺一个它就不像"浮在桌面上"，而像一个小窗口。
@@ -82,10 +88,12 @@ function createPet({ desktopDir, getLocale, onActivate, onDisable, position, onM
 
   const showMenu = () => {
     const t = LABELS[getLocale()] ?? LABELS.en
+    // 刻意不放"关闭宠物模式"：右键是高频误触区，把宠物弄丢的代价远大于
+    // 省下一次去主菜单的路。关闭入口只留在应用菜单里。
     Menu.buildFromTemplate([
       { label: t.open, click: onActivate },
       { type: 'separator' },
-      { label: t.off, click: onDisable },
+      { label: t.fresh, click: onFreshTopic },
     ]).popup({ window: win })
   }
 
@@ -99,16 +107,22 @@ function createPet({ desktopDir, getLocale, onActivate, onDisable, position, onM
      * focusable 跟着切换：收起时为 false，点它之前你正在做的事不该被打断；
      * 展开时必须为 true，否则输入框拿不到焦点，打不了字。
      */
-    resize: (expanded) => {
+    resize: (mode) => {
       if (win.isDestroyed()) return
+      const size = BOUNDS[mode] ?? BOUNDS.idle
       const [x, y] = win.getPosition()
-      win.setFocusable(expanded)
-      win.setBounds({
-        x, y,
-        width: expanded ? OPEN_WIDTH : SIZE,
-        height: expanded ? OPEN_HEIGHT : SIZE,
-      })
-      if (expanded) win.focus()
+      // 只有展开输入时才可获得焦点：气泡和静默态都不该抢走你正在做的事。
+      win.setFocusable(mode === 'open')
+      win.setBounds({ x, y, ...size })
+      if (mode === 'open') win.focus()
+    },
+
+    /** 让鱼说一句话。 */
+    say: (text, ms) => {
+      if (win.isDestroyed()) return
+      void win.webContents.executeJavaScript(
+        `window.__dshPetSay?.(${JSON.stringify(text)}, ${Number(ms) || 4200})`,
+      ).catch(() => { /* 页面还没加载完 */ })
     },
 
     /** 推一个状态过去；窗口没了就静默忽略。 */

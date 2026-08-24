@@ -171,38 +171,57 @@
   if (document.body) mountBar()
   else document.addEventListener('DOMContentLoaded', mountBar, { once: true })
 
-  // ---------------------------------------------------------------- 强调色
+  // ---------------------------------------------------------------- 外观
 
   /**
-   * 应用强调色。
+   * 应用外观：主题令牌 + 聊天背景。
    *
-   * 上游把强调色收敛在两个别名令牌上，亮暗两套调色板分别由 `body` 与
-   * `body[data-ds-dark-theme]` 选中，所以两半都要写 —— 只写一半的话，用户切到
-   * 另一半就会看到默认色回来，像是设置没保存。
+   * 亮暗两套分别由 `body` 与 `body[data-ds-dark-theme]` 选中，两半都要写 ——
+   * 只写一半的话，用户切到另一半会看到主题"失效"，而那其实是我们没写。
    *
-   * 默认档不写任何令牌：还原上游品牌色的正确做法是"不覆盖"，而不是拿一组值去
-   * 覆盖成看起来一样的东西。
+   * 聊天背景贴在 [data-conversation-scroll] 上，用伪元素而不是直接设 background：
+   * 那个元素自己要滚动，直接设背景会跟着内容一起滚走；伪元素固定在容器上才是
+   * "背景"该有的样子。它也不能拦鼠标，否则消息就选不中了。
    */
-  const accentStyle = document.createElement('style')
-  document.head.appendChild(accentStyle)
+  const looks = document.createElement('style')
+  document.head.appendChild(looks)
 
-  const applyAccent = (accent) => {
-    if (!accent || accent.light === undefined) { accentStyle.textContent = ''; return }
-    accentStyle.textContent = `
+  const applyAppearance = (look) => {
+    if (!look) { looks.textContent = ''; return }
+    const vars = (dict) => Object.entries(dict ?? {})
+      .map(([k, v]) => `${k}: ${v} !important;`).join(' ')
+
+    const chat = look.chat ?? { kind: 'none' }
+    const layer = chat.kind === 'none' ? '' : `
+      [data-conversation-scroll] { position: relative; }
+      [data-conversation-scroll]::before {
+        content: ''; position: absolute; inset: 0;
+        pointer-events: none;   /* 背景不该拦住选中与点击 */
+        z-index: 0;
+        opacity: ${chat.opacity ?? 0.18};
+        ${chat.kind === 'color'
+          ? `background: ${chat.value};`
+          : `background-image: url("${encodeURI(chat.value ?? '').replace(/"/g, '%22')}");
+             background-size: cover; background-position: center;`}
+      }
+      /* 内容压在背景之上，否则会被伪元素盖住。 */
+      [data-conversation-scroll] > * { position: relative; z-index: 1; }
+    `
+
+    looks.textContent = `
       body {
-        --dsw-alias-state-business-primary: ${accent.light.primary} !important;
-        --dsw-alias-state-business-tertiary: ${accent.light.tertiary} !important;
+        ${vars(look.tokens?.light)}
       }
       body[data-ds-dark-theme] {
-        --dsw-alias-state-business-primary: ${accent.dark.primary} !important;
-        --dsw-alias-state-business-tertiary: ${accent.dark.tertiary} !important;
+        ${vars(look.tokens?.dark)}
       }
+      ${layer}
     `
   }
 
-  // 首屏的值由主进程随入口页注入，避免先闪一下默认色再变。
-  applyAccent(globalThis.__dshAccent)
-  ipc.onAccent?.(applyAccent)
+  // 首屏的值由主进程随入口页注入，避免先闪一下默认外观再变。
+  applyAppearance(globalThis.__dshAppearance)
+  ipc.onAppearance?.(applyAppearance)
 
   // ---------------------------------------------------------------- 品牌
 

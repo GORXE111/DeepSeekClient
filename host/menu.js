@@ -21,7 +21,7 @@
  */
 
 const { app, Menu, dialog } = require('electron')
-const { ACCENTS, accentById } = require('./accents.js')
+
 const path = require('node:path')
 const fs = require('node:fs')
 
@@ -58,7 +58,7 @@ const STRINGS = {
     edit: '编辑',
     undo: '撤销', redo: '重做', cut: '剪切', copy: '复制', paste: '粘贴', selectAll: '全选',
     language: '语言', chinese: '简体中文', english: 'English',
-    appearance: '强调色',
+    appearance: '外观…',
     pet: '宠物模式',
     about: '关于 DeepSeek Client', services: '服务',
     hide: '隐藏', hideOthers: '隐藏其他', unhide: '全部显示', quit: '退出',
@@ -69,7 +69,7 @@ const STRINGS = {
     edit: 'Edit',
     undo: 'Undo', redo: 'Redo', cut: 'Cut', copy: 'Copy', paste: 'Paste', selectAll: 'Select All',
     language: 'Language', chinese: '简体中文', english: 'English',
-    appearance: 'Accent',
+    appearance: 'Appearance…',
     pet: 'Pet Mode',
     about: 'About DeepSeek Client', services: 'Services',
     hide: 'Hide', hideOthers: 'Hide Others', unhide: 'Show All', quit: 'Quit',
@@ -84,15 +84,11 @@ const STRINGS = {
  *   把语言写进 harness 的 locale 设置。菜单只负责发出意图，怎么送到运行时是
  *   调用方的事 —— 这个模块不该知道管道的存在。
  */
-function currentAccent() {
-  return accentById(readPrefs().accent).id
-}
-
 function petEnabled() {
   return readPrefs().pet === true
 }
 
-function installMenu(applyLocale, applyAccent, togglePet) {
+function installMenu(applyLocale, openAppearance, togglePet) {
   const locale = currentLocale()
   const t = STRINGS[locale]
   const mac = process.platform === 'darwin'
@@ -102,28 +98,19 @@ function installMenu(applyLocale, applyAccent, togglePet) {
       label: t.chinese,
       type: 'radio',
       checked: locale === 'zh',
-      click: () => { switchLocale('zh', applyLocale, applyAccent, togglePet) },
+      click: () => { switchLocale('zh', applyLocale, openAppearance, togglePet) },
     },
     {
       label: t.english,
       type: 'radio',
       checked: locale === 'en',
-      click: () => { switchLocale('en', applyLocale, applyAccent, togglePet) },
+      click: () => { switchLocale('en', applyLocale, openAppearance, togglePet) },
     },
   ]
 
-  // 强调色只改两个别名令牌，切换是即时的 —— 所以不必提示重启，点完就该看见变化。
-  const accent = currentAccent()
-  const appearanceSubmenu = ACCENTS.map((a) => ({
-    label: locale === 'zh' ? a.zh : a.en,
-    type: 'radio',
-    checked: accent === a.id,
-    click: () => {
-      writePrefs({ ...readPrefs(), accent: a.id })
-      installMenu(applyLocale, applyAccent, togglePet)
-      applyAccent?.(a.id)
-    },
-  }))
+  // 外观从单选菜单改成一个面板：主题、自定义强调色、聊天背景三件事塞不进
+  // 一列单选项，而且外观是看着调的，需要能立刻看到效果的地方。
+  const appearanceItem = { label: t.appearance, click: () => { openAppearance?.() } }
 
   // 宠物模式默认关闭：一个会浮在别人所有窗口之上的东西，不该装完就自己冒出来。
   const petItem = {
@@ -147,7 +134,7 @@ function installMenu(applyLocale, applyAccent, togglePet) {
         { label: t.about, role: 'about' },
         { type: 'separator' },
         { label: t.language, submenu: languageSubmenu },
-        { label: t.appearance, submenu: appearanceSubmenu },
+        appearanceItem,
         petItem,
         { type: 'separator' },
         { label: t.services, role: 'services' },
@@ -181,7 +168,7 @@ function installMenu(applyLocale, applyAccent, togglePet) {
     template.push({ label: t.language, submenu: languageSubmenu })
     template.push({
       label: t.appearance,
-      submenu: [...appearanceSubmenu, { type: 'separator' }, petItem, { type: 'separator' }, { label: t.quit, role: 'quit' }],
+      submenu: [appearanceItem, { type: 'separator' }, petItem, { type: 'separator' }, { label: t.quit, role: 'quit' }],
     })
   }
 
@@ -198,10 +185,10 @@ function installMenu(applyLocale, applyAccent, togglePet) {
  * 早先这里只换菜单文字并提示重启 —— 那等于给用户两个语言开关，其中一个还不
  * 管用。发现上游已有之后就没有理由那么做了。
  */
-function switchLocale(next, applyLocale, applyAccent, togglePet) {
+function switchLocale(next, applyLocale, openAppearance, togglePet) {
   if (currentLocale() === next) return
   writePrefs({ ...readPrefs(), locale: next })
-  installMenu(applyLocale, applyAccent, togglePet)
+  installMenu(applyLocale, openAppearance, togglePet)
   Promise.resolve(applyLocale?.(next)).catch((err) => {
     // 界面没跟着变的话要说出来，否则用户只会觉得"点了没用"。
     void dialog.showMessageBox({
@@ -213,4 +200,4 @@ function switchLocale(next, applyLocale, applyAccent, togglePet) {
   })
 }
 
-module.exports = { installMenu, currentLocale, currentAccent, petEnabled, readPrefs, writePrefs, STRINGS }
+module.exports = { installMenu, currentLocale, petEnabled, readPrefs, writePrefs, STRINGS }

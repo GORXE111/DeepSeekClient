@@ -58,7 +58,11 @@ contextBridge.exposeInMainWorld('__dshIpc', {
    * 订阅强调色变化。壳改了强调色之后页面要立刻跟上，重载会丢掉正在编辑的
    * 内容，所以走推送而不是刷新。
    */
-  onAccent: (cb) => { ipcRenderer.on('dsh:accent', (_e, accent) => { cb(accent) }) },
+  /**
+   * 订阅外观变化。改了外观之后页面要立刻跟上，重载会丢掉正在编辑的内容，
+   * 所以走推送而不是刷新。
+   */
+  onAppearance: (cb) => { ipcRenderer.on('dsh:appearance', (_e, look) => { cb(look) }) },
 
   /** 关闭一条下行流；重复关闭是安全的。 */
   closeStream: (id) => {

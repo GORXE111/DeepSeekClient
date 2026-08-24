@@ -46,9 +46,10 @@ const TEXT = {
  * @param {object} deps
  * @param {() => import('electron').BrowserWindow | null} deps.getWindow 取当前窗口
  * @param {() => 'zh' | 'en'} deps.getLocale 取界面语言，通知也要跟着走
- * @param {(state: 'idle' | 'running' | 'attention') => void} [deps.onState] 状态变化（托盘用）
+ * @param {(state: 'idle' | 'running' | 'attention') => void} [deps.onState] 状态变化（托盘与宠物用）
+ * @param {(kind: string, detail?: string) => void} [deps.onSay] 同一个事件也让宠物说一句
  */
-function createNotifier({ getWindow, getLocale, onState }) {
+function createNotifier({ getWindow, getLocale, onState, onSay }) {
   let attention = false
 
   const publishState = () => {
@@ -62,6 +63,9 @@ function createNotifier({ getWindow, getLocale, onState }) {
   }
 
   const notify = (kind, arg) => {
+    // 鱼不受"窗口有焦点就闭嘴"的约束：人就在屏幕前时，系统通知反而容易被
+    // 忽略，桌面上一条鱼开口说话是更合适的提醒方式。
+    onSay?.(kind, arg)
     if (focused()) return
     if (!Notification.isSupported()) return
     const t = TEXT[getLocale()] ?? TEXT.en

@@ -4,179 +4,211 @@
 <meta charset="utf-8">
 <title>DeepSeek Client</title>
 <style>
-  /* 悬浮宠物窗。
-     收起时是一枚小圆点，点开变成一个快捷输入条。
+  /* 像素宠物。
+     鱼是逐帧光栅化到 32×24 网格上再整体放大的（见 pet-sprite.js），不是矢量图
+     缩放 —— 后者放大后边缘会被插值糊掉，那就不是像素风了。
 
-     窗口本身的尺寸变化是瞬时的（操作系统不给窗口做补间），所以观感全靠内容
-     动画：先把窗口放大到展开尺寸，再让面板从圆点位置缩放淡入。反过来收起时
-     先播退场动画，等它结束主进程才把窗口缩回去 —— 顺序错了就会看到内容还在
-     动、窗口已经切掉一半。 */
+     窗口尺寸永远贴着可见内容（三档：静默 / 冒泡 / 展开）。透明区域一样会拦住
+     下面的点击，要绕开得靠 setIgnoreMouseEvents 加逐帧命中测试；窗口贴着内容长，
+     这个问题根本不存在。 */
   html, body {
     margin: 0; height: 100%;
-    background: transparent;
-    overflow: hidden;
+    background: transparent; overflow: hidden;
     -webkit-user-select: none; user-select: none;
     font: 13px/1.5 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   }
   body {
     display: flex; align-items: center; gap: 10px;
-    padding: 8px;
-    box-sizing: border-box;
+    padding: 8px; box-sizing: border-box;
     -webkit-app-region: drag;
   }
 
-  /* ---- 圆点本体 ---- */
-  .pet {
-    flex: none;
-    width: 56px; height: 56px;
-    display: grid; place-items: center;
-    border-radius: 50%;
-    background: rgba(20, 24, 31, 0.92);
-    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.32);
-    transition: transform 160ms ease, box-shadow 160ms ease;
+  .tank {
+    flex: none; position: relative;
+    width: 128px; height: 96px;
     cursor: pointer;
+    -webkit-app-region: no-drag;
+    /* 整体上下浮动。这一层是 CSS，因为"鱼在水里飘"是位移而不是形变 ——
+       把它也做进逐帧里会让每帧都要重画一遍位置，白费。 */
+    animation: bob 3.4s ease-in-out infinite;
   }
-  /* 悬停轻微抬起。不做夸张弹跳 —— 那种东西第一次好玩，第十次就想卸载。 */
-  body:not(.open) .pet:hover {
-    transform: translateY(-2px) scale(1.04);
-    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.4);
+  canvas {
+    display: block; width: 100%; height: 100%;
+    /* 放大时保持硬边，这一句是像素风的命门。 */
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
   }
+  @keyframes bob { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-5px) } }
 
-  svg { display: block; width: 34px; height: 34px; }
-  .back { stroke: #8e96a6; stroke-opacity: 0.45; }
-  .front { stroke: var(--pet-accent, #5b7cff); transition: stroke 240ms ease; }
+  body.state-running .tank { animation-duration: 2s }
+  body.state-attention .tank { filter: drop-shadow(0 0 8px var(--accent, #5b7cff)) }
 
-  /* 运行中：外圈缓慢转动。用旋转而不是闪烁 —— 闪烁在余光里很吵。 */
-  .spin { animation: spin 3.4s linear infinite; transform-origin: 50% 50%; }
-  @keyframes spin { to { transform: rotate(360deg) } }
-  /* 等你处理：呼吸。比旋转更想引起注意，但仍然不刺眼。 */
-  .pulse { animation: pulse 1.5s ease-in-out infinite; }
-  @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.42 } }
-
-  /* ---- 展开的输入面板 ---- */
-  .panel {
+  .bubble, .panel {
     flex: 1; min-width: 0;
-    display: flex; align-items: center; gap: 8px;
-    padding: 8px 10px;
-    border-radius: 14px;
-    background: rgba(24, 28, 36, 0.96);
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.38);
-    /* 收起时不占位也不可点，但保留在 DOM 里，动画才有起止两端。 */
-    opacity: 0;
-    transform: translateX(-14px) scale(0.94);
+    padding: 10px 13px;
+    background: rgba(20, 24, 31, .96);
+    color: #e9ebef;
+    box-shadow: 0 8px 26px rgba(0,0,0,.36);
+    opacity: 0; transform: translateX(-8px) scale(.94);
     transform-origin: left center;
+    transition: opacity 160ms ease, transform 200ms cubic-bezier(.2,.9,.3,1.25);
+  }
+  /* 气泡也走像素风：直角 + 硬边描边，圆角会和鱼打架。 */
+  .bubble {
+    border-radius: 0;
+    box-shadow: 0 0 0 3px rgba(20,24,31,.96), 0 0 0 6px var(--accent, #5b7cff), 0 8px 26px rgba(0,0,0,.36);
     pointer-events: none;
-    transition: opacity 170ms ease, transform 190ms cubic-bezier(.2,.9,.3,1.2);
+  }
+  body.bubbling .bubble { opacity: 1; transform: none }
+  .bubble.hidden, .panel.hidden { display: none }
+
+  .panel {
+    display: flex; align-items: center; gap: 8px;
+    border-radius: 0;
+    box-shadow: 0 0 0 3px rgba(20,24,31,.96), 0 0 0 6px var(--accent, #5b7cff), 0 8px 28px rgba(0,0,0,.38);
+    pointer-events: none;
     -webkit-app-region: no-drag;
   }
-  body.open .panel { opacity: 1; transform: none; pointer-events: auto; }
+  body.open .panel { opacity: 1; transform: none; pointer-events: auto }
 
   input {
-    flex: 1; min-width: 0;
-    border: 0; outline: 0; background: transparent;
-    color: #e9ebef; font: inherit;
-    padding: 4px 2px;
+    flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
+    color: #e9ebef; font: inherit; padding: 4px 2px;
   }
-  input::placeholder { color: #7b828f; }
-
+  input::placeholder { color: #7b828f }
   .send {
-    flex: none;
-    width: 28px; height: 28px;
-    display: grid; place-items: center;
-    border: 0; border-radius: 50%;
-    background: var(--pet-accent, #5b7cff);
-    color: #fff; cursor: pointer;
+    flex: none; width: 26px; height: 26px; display: grid; place-items: center;
+    border: 0; border-radius: 0; background: var(--accent, #5b7cff);
+    color: #fff; cursor: pointer; font: 600 13px/1 monospace;
     transition: opacity 140ms ease;
   }
-  .send:disabled { opacity: 0.35; cursor: default; }
-
-  .hint {
-    position: absolute; left: 76px; bottom: 2px;
-    font-size: 10.5px; color: #6b7280;
-    opacity: 0; transition: opacity 160ms ease;
-    pointer-events: none;
-  }
-  body.open .hint { opacity: 1; }
+  .send:disabled { opacity: .35; cursor: default }
 
   @media (prefers-reduced-motion: reduce) {
-    .pet, .panel, .send, .hint { transition: none }
-    .spin, .pulse { animation: none }
+    .tank { animation: none }
+    .bubble, .panel { transition: none }
   }
 </style>
 </head>
-<body>
-  <div class="pet" id="pet">
-    <svg viewBox="0 0 1024 1024" aria-hidden="true">
-      <mask id="cut">
-        <rect width="1024" height="1024" fill="#fff"/>
-        <circle cx="512" cy="390.5" r="34" fill="#000"/>
-      </mask>
-      <g id="ring">
-        <circle class="back" cx="424" cy="512" r="150" fill="none" stroke-width="34"/>
-        <circle class="front" cx="600" cy="512" r="150" fill="none" stroke-width="44" mask="url(#cut)"/>
-      </g>
-    </svg>
-  </div>
-
-  <div class="panel" id="panel">
+<body class="state-idle">
+  <div class="tank" id="tank"><canvas id="cv"></canvas></div>
+  <div class="bubble hidden" id="bubble"></div>
+  <div class="panel hidden" id="panel">
     <input id="input" type="text" placeholder="说点什么…" autocomplete="off" spellcheck="false">
-    <button class="send" id="send" disabled aria-label="发送">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4"
-           stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-    </button>
+    <button class="send" id="send" disabled aria-label="发送">▶</button>
   </div>
-  <div class="hint" id="hint">Enter 发送 · Esc 收起</div>
 
+<script src="./pet-sprite.js"></script>
 <script>
-  const ACCENT = { idle: '#8e96a6', running: '#5b7cff', attention: '#e08a2b' }
+  const ACCENT = { idle: '#6f9bd1', running: '#5b7cff', attention: '#e0902b' }
+  const SCALE = 4
 
   const body = document.body
-  const pet = document.getElementById('pet')
-  const ring = document.getElementById('ring')
+  const tank = document.getElementById('tank')
+  const bubble = document.getElementById('bubble')
   const panel = document.getElementById('panel')
   const input = document.getElementById('input')
   const send = document.getElementById('send')
-  const hint = document.getElementById('hint')
+  const cv = document.getElementById('cv')
+  const ctx = cv.getContext('2d')
 
+  const { W, H, renderFrame, paint } = globalThis.__dshSprite
+  cv.width = W * SCALE
+  cv.height = H * SCALE
+
+  let accent = ACCENT.idle
+  let frame = 0
   let open = false
+  let bubbleTimer
 
-  // 状态由主进程推送：宠物、托盘、通知看的是同一份状态，不各自推断。
+  /**
+   * 帧循环。
+   *
+   * 用固定间隔换帧而不是 requestAnimationFrame：像素动画的味道恰恰来自"帧率低
+   * 且稳定"，跟着显示器刷新率跑反而会显得滑，那是矢量动画的质感。
+   *
+   * 眨眼不进帧循环，它是稀疏事件 —— 混进四帧循环里会变成规律抽搐。
+   */
+  let blink = false
+  const tick = () => {
+    frame = (frame + 1) % 4
+    paint(ctx, renderFrame(frame, { blink }), accent, SCALE)
+  }
+  let timer = setInterval(tick, 220)
+
+  const retime = (ms) => { clearInterval(timer); timer = setInterval(tick, ms) }
+
+  const scheduleBlink = () => {
+    setTimeout(() => {
+      blink = true
+      paint(ctx, renderFrame(frame, { blink }), accent, SCALE)
+      setTimeout(() => { blink = false; scheduleBlink() }, 120)
+    }, 2600 + Math.random() * 4200)
+  }
+  scheduleBlink()
+  tick()
+
+  /** 状态由主进程推送：鱼、托盘、通知看同一份状态，不各自推断。 */
   window.__dshPetState = (state) => {
-    const color = ACCENT[state] ?? ACCENT.idle
-    document.documentElement.style.setProperty('--pet-accent', color)
-    ring.classList.toggle('spin', state === 'running')
-    ring.classList.toggle('pulse', state === 'attention')
+    accent = ACCENT[state] ?? ACCENT.idle
+    document.documentElement.style.setProperty('--accent', accent)
+    body.classList.remove('state-idle', 'state-running', 'state-attention')
+    body.classList.add(`state-${state ?? 'idle'}`)
+    // 忙的时候游得快，等人的时候几乎不动 —— 帧率本身就是状态的一部分。
+    retime(state === 'running' ? 110 : state === 'attention' ? 420 : 220)
+    tick()
   }
 
   /**
-   * 展开与收起。
-   *
-   * 展开：先让主进程把窗口放大（否则面板会被窗口边界切掉），下一帧再加 class
-   * 触发动画 —— 同一帧里改尺寸又改 class，浏览器会把它们合成一次布局，动画
-   * 直接被跳过。
-   *
-   * 收起：先播退场动画，等它结束再请主进程缩窗口。
+   * 弹一句话。展开输入时不弹 —— 那会把输入框挤走，而且用户正在打字。
+   * 气泡自动消失：一条永远挂在桌面上的提示很快就变成视觉噪音。
+   */
+  window.__dshPetSay = async (text, ms = 4200) => {
+    if (open || typeof text !== 'string' || text === '') return
+    clearTimeout(bubbleTimer)
+    bubble.textContent = text
+    bubble.classList.remove('hidden')
+    await window.__dshPet?.resize('bubble')
+    requestAnimationFrame(() => { body.classList.add('bubbling') })
+    bubbleTimer = setTimeout(hideBubble, ms)
+  }
+
+  const hideBubble = () => {
+    if (!body.classList.contains('bubbling')) return
+    body.classList.remove('bubbling')
+    setTimeout(async () => {
+      bubble.classList.add('hidden')
+      if (!open) await window.__dshPet?.resize('idle')
+    }, 200)
+  }
+
+  /**
+   * 展开与收起。顺序有讲究：展开先放大窗口、下一帧再加 class，否则浏览器会把
+   * 尺寸变化和 class 合成一次布局，动画直接被跳过；收起反过来，先播退场再缩窗口。
    */
   const setOpen = async (next) => {
     if (next === open) return
     open = next
     if (open) {
-      await window.__dshPet?.resize(true)
-      requestAnimationFrame(() => {
-        body.classList.add('open')
-        input.focus()
-      })
+      clearTimeout(bubbleTimer)
+      body.classList.remove('bubbling')
+      bubble.classList.add('hidden')
+      panel.classList.remove('hidden')
+      await window.__dshPet?.resize('open')
+      requestAnimationFrame(() => { body.classList.add('open'); input.focus() })
     } else {
       body.classList.remove('open')
       input.value = ''
       send.disabled = true
-      setTimeout(() => { void window.__dshPet?.resize(false) }, 200)
+      setTimeout(async () => {
+        panel.classList.add('hidden')
+        await window.__dshPet?.resize('idle')
+      }, 200)
     }
   }
 
-  pet.addEventListener('click', () => { void setOpen(!open) })
-  pet.addEventListener('contextmenu', (e) => { e.preventDefault(); window.__dshPet?.menu() })
-
+  tank.addEventListener('click', () => { void setOpen(!open) })
+  tank.addEventListener('contextmenu', (e) => { e.preventDefault(); window.__dshPet?.menu() })
   input.addEventListener('input', () => { send.disabled = input.value.trim() === '' })
 
   const submit = async () => {
@@ -185,13 +217,10 @@
     input.value = ''
     send.disabled = true
     const result = await window.__dshPet?.ask(text)
-    // 失败要说出来。悄悄吞掉的话，用户只会觉得"我发了但什么都没发生"。
+    await setOpen(false)
     if (result && result.ok === false) {
-      hint.textContent = result.error ?? '发送失败'
-      hint.style.color = '#e08a2b'
-      return
+      setTimeout(() => { void window.__dshPetSay(result.error ?? '发送失败', 6000) }, 320)
     }
-    void setOpen(false)
   }
 
   send.addEventListener('click', () => { void submit() })
@@ -199,8 +228,6 @@
     if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); void submit(); return }
     if (e.key === 'Escape') { e.preventDefault(); void setOpen(false) }
   })
-
-  // 失焦即收起：一个浮在所有窗口之上的输入框，点别处之后还张着嘴很碍事。
   window.addEventListener('blur', () => { if (open) void setOpen(false) })
 </script>
 </body>
