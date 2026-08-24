@@ -120,6 +120,57 @@
   })
 
 
+  // ---------------------------------------------------------------- 标题栏
+
+  /**
+   * 插入应用自己的标题栏。
+   *
+   * 关键决定：这条栏**真实占位**，把应用内容整体下推，而不是浮在上面。
+   * 覆盖式的拖拽条写起来简单，但它会挡住下面那一排真实控件 —— 侧边栏顶部的
+   * 品牌按钮、折叠按钮、会话视图的标签页全在这个高度上。挡住之后点不动，
+   * 而且症状是"这个按钮偶尔没反应"，极难查。
+   *
+   * 高度由主进程给（window.__dshTitlebarHeight）：Windows 的系统按钮覆盖层
+   * 按同一个值定高，两边各写一个数就会错开一条缝。
+   */
+  const titlebarHeight = Number(globalThis.__dshTitlebarHeight) || 36
+
+  const chrome = document.createElement('style')
+  chrome.textContent = `
+    :root { --dsh-titlebar-h: ${titlebarHeight}px; }
+
+    /* 应用根节点让出标题栏的高度。上游按 100vh 铺满，不减掉这一段的话
+       底部会被顶出视口，出现一条永远滚不到的溢出。 */
+    body { padding-top: var(--dsh-titlebar-h) !important; }
+    #root { height: calc(100vh - var(--dsh-titlebar-h)) !important; }
+
+    .dsh-titlebar {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: var(--dsh-titlebar-h);
+      display: flex; align-items: center;
+      /* macOS 的红绿灯在左上，给它让出位置；Windows 的系统按钮在右上，
+         由 titleBarOverlay 自己占，这里不必留。 */
+      padding-left: ${navigator.userAgent.includes('Mac') ? '78px' : '12px'};
+      gap: 8px;
+      font: 500 12.5px/1 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      color: color-mix(in srgb, currentColor 45%, transparent);
+      -webkit-app-region: drag;
+      -webkit-user-select: none; user-select: none;
+      z-index: 2147483000;
+    }
+    /* 栏内若放可点的东西，必须显式退出拖拽区，否则点不动。 */
+    .dsh-titlebar button, .dsh-titlebar a { -webkit-app-region: no-drag; }
+  `
+  document.head.appendChild(chrome)
+
+  const bar = document.createElement('div')
+  bar.className = 'dsh-titlebar'
+  bar.textContent = 'DeepSeek Client'
+  // 等 body 存在再插；垫片跑在页面脚本之前，这时 body 可能还没有。
+  const mountBar = () => { document.body?.appendChild(bar) }
+  if (document.body) mountBar()
+  else document.addEventListener('DOMContentLoaded', mountBar, { once: true })
+
   // ---------------------------------------------------------------- 品牌
 
   /**

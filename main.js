@@ -14,6 +14,7 @@
 
 const { app, BrowserWindow, ipcMain, protocol, shell, dialog, utilityProcess } = require('electron')
 const path = require('node:path')
+const { randomUUID } = require('node:crypto')
 const fs = require('node:fs')
 const { proxy, unary, openStream } = require('./host/pipe-bridge.js')
 const { installMenu } = require('./host/menu.js')
@@ -112,6 +113,12 @@ function reportHarnessDeath(detail) {
 /** 页面的来源。用自有 scheme 而不是 file://，理由见 serveFromPipe。 */
 const APP_ORIGIN = 'dsh://app'
 
+/**
+ * 自绘标题栏的高度。壳与页面必须用同一个值 —— 页面要按它把内容往下让，
+ * Windows 的系统按钮覆盖层也按它定高，两边对不齐就会出现一条错位的缝。
+ */
+const TITLEBAR_HEIGHT = 36
+
 /** 垫片的对外路径。放在自有 scheme 下，与页面同源。 */
 const SHIM_PATH = '/dsh-ipc-shim.js'
 
@@ -155,7 +162,7 @@ function serveFromPipe() {
     // WebApiClient 脚下的 WebSocket，晚一步就有连接已经走了原生路径。
     if ((result.headers['content-type'] ?? '').includes('text/html')) {
       const html = result.body.toString('utf8')
-      const tag = `<script src="${SHIM_PATH}"></script>`
+      const tag = `<script>window.__dshTitlebarHeight=${TITLEBAR_HEIGHT}</script><script src="${SHIM_PATH}"></script>`
       const injected = html.includes('<head>') ? html.replace('<head>', `<head>
 ${tag}`) : `${tag}
 ${html}`
@@ -222,6 +229,19 @@ function createWindow() {
     backgroundColor: '#fbfbfc',
     title: 'DeepSeek Client',
     icon: path.join(DESKTOP, 'build', 'icon.png'),
+    // 去掉系统标题栏，换成应用自己的那条。两个平台的做法不同，而且都不是
+    // "无边框"那么简单：
+    //  · macOS 用 hiddenInset —— 红绿灯按钮保留并内缩，这是原生应用的样子；
+    //    真做成 frameless 会连红绿灯一起没掉，那不是现代，是坏掉。
+    //  · Windows 用 hidden + titleBarOverlay —— 最小化/最大化/关闭仍由系统绘制
+    //    在右上角，颜色交给我们。自绘那三个按钮永远差一口气（贴边、高对比模式、
+    //    触摸目标尺寸都要自己伺候），没必要。
+    ...process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 14, y: 12 } }
+      : {
+        titleBarStyle: 'hidden',
+        titleBarOverlay: { color: '#00000000', symbolColor: '#6b7280', height: TITLEBAR_HEIGHT },
+      },
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -286,7 +306,21 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     try {
-      installMenu(() => { app.relaunch(); app.exit(0) })
+      // 语言写进 harness 自己的 locale 设置（namespace 'locale'，字段
+      // 'preference'）—— 上游前端订阅它，界面立刻跟着变，不需要重启。
+      installMenu(async (locale) => {
+        if (pipe === null) throw new Error('后台服务尚未就绪')
+        const r = await unary(pipe, {
+          path: '/api/settings.update',
+          body: JSON.stringify({
+            type: 'client-request',
+            rpcId: randomUUID(),
+            method: 'settings.update',
+            payload: { ns: 'locale', patch: { preference: locale } },
+          }),
+        })
+        if (r.status !== 200) throw new Error(`settings.update 返回 HTTP ${r.status}`)
+      })
       // 先把窗口开出来（启动画面），再去引导 —— 引导要几秒，那几秒不该是空白。
       createWindow()
       splashStatus('正在启动后台服务…')

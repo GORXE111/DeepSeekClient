@@ -13,8 +13,9 @@
  * —— 那是系统约定，放错比没有菜单更显业余；Windows 上没有应用菜单，语言与
  * 退出就得另有去处。
  *
- * 语言选择存在 userData 下，与 harness 自己的设置分开：这是壳的偏好，不该混进
- * 用户的 harness 配置里。
+ * 语言不另起一套：上游前端自带 i18n（设置 → 语言），菜单把同一个设置写过去，
+ * 两个入口共用一份状态。菜单自己那份文案的选择记在 userData 下，只为下次启动
+ * 能先摆出正确的菜单，不等运行时就绪。
  *
  * @module menu
  */
@@ -58,8 +59,8 @@ const STRINGS = {
     language: '语言', chinese: '简体中文', english: 'English',
     about: '关于 DeepSeek Client', services: '服务',
     hide: '隐藏', hideOthers: '隐藏其他', unhide: '全部显示', quit: '退出',
-    restartHint: '界面语言已切换，重启后生效。',
-    restartTitle: '需要重启',
+    restartHint: '菜单语言已切换，但界面语言没能同步。',
+    restartTitle: '语言未完全切换',
   },
   en: {
     edit: 'Edit',
@@ -67,16 +68,18 @@ const STRINGS = {
     language: 'Language', chinese: '简体中文', english: 'English',
     about: 'About DeepSeek Client', services: 'Services',
     hide: 'Hide', hideOthers: 'Hide Others', unhide: 'Show All', quit: 'Quit',
-    restartHint: 'The interface language will change after a restart.',
-    restartTitle: 'Restart Required',
+    restartHint: 'The menu language changed, but the interface language could not be synced.',
+    restartTitle: 'Language Not Fully Applied',
   },
 }
 
 /**
  * 装上菜单。
- * @param {() => void} onRelaunchNeeded - 语言切换后由调用方决定怎么提示/重启。
+ * @param {(locale: 'zh' | 'en') => void | Promise<void>} applyLocale
+ *   把语言写进 harness 的 locale 设置。菜单只负责发出意图，怎么送到运行时是
+ *   调用方的事 —— 这个模块不该知道管道的存在。
  */
-function installMenu(onRelaunchNeeded) {
+function installMenu(applyLocale) {
   const locale = currentLocale()
   const t = STRINGS[locale]
   const mac = process.platform === 'darwin'
@@ -86,13 +89,13 @@ function installMenu(onRelaunchNeeded) {
       label: t.chinese,
       type: 'radio',
       checked: locale === 'zh',
-      click: () => { switchLocale('zh', onRelaunchNeeded) },
+      click: () => { switchLocale('zh', applyLocale) },
     },
     {
       label: t.english,
       type: 'radio',
       checked: locale === 'en',
-      click: () => { switchLocale('en', onRelaunchNeeded) },
+      click: () => { switchLocale('en', applyLocale) },
     },
   ]
 
@@ -145,14 +148,29 @@ function installMenu(onRelaunchNeeded) {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
-/** 切换语言并落盘。菜单立刻重建，界面其余部分要等重启 —— 如实告知而不是假装已生效。 */
-function switchLocale(next, onRelaunchNeeded) {
+/**
+ * 切换语言。
+ *
+ * 上游前端自己带 i18n（设置 → 语言），存在 `locale` 命名空间的 `preference`
+ * 字段里。所以这里不另起一套：菜单把同一个设置写过去，界面立刻跟着变，菜单
+ * 文字也一并重建。两个入口、一份状态。
+ *
+ * 早先这里只换菜单文字并提示重启 —— 那等于给用户两个语言开关，其中一个还不
+ * 管用。发现上游已有之后就没有理由那么做了。
+ */
+function switchLocale(next, applyLocale) {
   if (currentLocale() === next) return
   writePrefs({ ...readPrefs(), locale: next })
-  installMenu(onRelaunchNeeded)
-  const t = STRINGS[next]
-  void dialog.showMessageBox({ type: 'info', title: t.restartTitle, message: t.restartHint })
-  onRelaunchNeeded?.()
+  installMenu(applyLocale)
+  Promise.resolve(applyLocale?.(next)).catch((err) => {
+    // 界面没跟着变的话要说出来，否则用户只会觉得"点了没用"。
+    void dialog.showMessageBox({
+      type: 'warning',
+      title: STRINGS[next].restartTitle,
+      message: STRINGS[next].restartHint,
+      detail: String(err && err.message ? err.message : err),
+    })
+  })
 }
 
 module.exports = { installMenu, currentLocale, STRINGS }
