@@ -16,6 +16,7 @@ const { app, BrowserWindow, ipcMain, protocol, shell, dialog, utilityProcess } =
 const path = require('node:path')
 const fs = require('node:fs')
 const { proxy, unary, openStream } = require('./host/pipe-bridge.js')
+const { installMenu } = require('./host/menu.js')
 
 /** harness 仓库根目录；DSH_DESKTOP_REPO 覆盖。 */
 const REPO = process.env.DSH_DESKTOP_REPO ?? 'E:\\DEEPSEEK\\deepseek-harness'
@@ -197,8 +198,10 @@ function createWindow() {
     height: 860,
     minWidth: 720,
     minHeight: 520,
-    show: false,
-    backgroundColor: '#ffffff',
+    // 立刻显示。等 ready-to-show 会让"点了图标什么都没有"持续到 harness 引导
+    // 完成 —— 那正是要消灭的那段空白。先出启动画面，内容就绪后再换。
+    show: true,
+    backgroundColor: '#fbfbfc',
     title: 'DeepSeek Harness',
     webPreferences: {
       nodeIntegration: false,
@@ -208,7 +211,6 @@ function createWindow() {
     },
   })
 
-  win.once('ready-to-show', () => { win?.show() })
   win.on('closed', () => { win = null })
 
   // 这个窗口是应用，不是通用浏览器：外链交给系统浏览器，站内导航不得离开 dist。
@@ -223,6 +225,21 @@ function createWindow() {
     }
   })
 
+  // 先上启动画面；harness 就绪后由 showApp() 换成真正的界面。
+  void win.loadFile(path.join(DESKTOP, 'renderer', 'splash.html'))
+}
+
+/** 把一行状态推给启动画面。窗口已经换成应用界面之后调用是无害的空操作。 */
+function splashStatus(text) {
+  if (win === null || win.isDestroyed()) return
+  void win.webContents.executeJavaScript(
+    `window.__dshSplash?.(${JSON.stringify(text)})`,
+  ).catch(() => { /* 已经不是启动画面了 */ })
+}
+
+/** 换到真正的界面。 */
+function showApp() {
+  if (win === null || win.isDestroyed()) return
   void win.loadURL(`${APP_ORIGIN}/`)
 }
 
@@ -247,11 +264,15 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     try {
-      // 顺序有讲究：入口页要经管道向已启动的 harness 取，所以必须先引导。
+      installMenu(() => { app.relaunch(); app.exit(0) })
+      // 先把窗口开出来（启动画面），再去引导 —— 引导要几秒，那几秒不该是空白。
+      createWindow()
+      splashStatus('正在启动后台服务…')
       pipe = await startHarness()
+      splashStatus('正在载入界面…')
       serveFromPipe()
       registerBridge()
-      createWindow()
+      showApp()
     } catch (err) {
       dialog.showErrorBox('DeepSeek Harness 启动失败', String(err instanceof Error ? err.message : err))
       app.quit()

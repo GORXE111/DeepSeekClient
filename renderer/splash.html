@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>DeepSeek Harness</title>
+<style>
+  /* 启动画面。它存在的唯一理由是消灭"点了图标之后什么都没有"的那两三秒 ——
+     harness 要引导插件树，这段时间省不掉，但可以不让它表现为一片空白。
+
+     刻意不做 logo 动画或进度条：进度是假的（引导没有可报告的百分比），而假进度
+     比没有进度更糟。这里只给一个呼吸感的状态行，如实说明正在做什么。 */
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 22px;
+    background: #fbfbfc;
+    color: #0f1115;
+    font: 14px/1.6 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none;
+    /* 整个画面可拖动：无边框窗口下这是唯一能挪动它的地方。 */
+    -webkit-app-region: drag;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #101216; color: #e9ebef; }
+  }
+
+  .mark {
+    width: 46px; height: 46px; border-radius: 13px;
+    background: linear-gradient(140deg, #4d6bfe, #7aa2ff);
+    display: grid; place-items: center;
+    color: #fff; font-size: 20px; font-weight: 600; letter-spacing: -0.02em;
+    box-shadow: 0 6px 20px rgba(77, 107, 254, 0.28);
+  }
+
+  .name { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
+
+  .status {
+    font-size: 12.5px;
+    color: color-mix(in srgb, currentColor 52%, transparent);
+    min-height: 1.6em;
+    /* 呼吸而不是转圈：转圈暗示"卡住了"，呼吸只表示"还在动"。 */
+    animation: breathe 2s ease-in-out infinite;
+  }
+  @keyframes breathe { 0%, 100% { opacity: .45 } 50% { opacity: .9 } }
+  @media (prefers-reduced-motion: reduce) { .status { animation: none; opacity: .7 } }
+</style>
+</head>
+<body>
+  <div class="mark">D</div>
+  <div class="name">DeepSeek Harness</div>
+  <div class="status" id="status">正在启动…</div>
+
+<script>
+  // 状态文案由主进程按引导阶段推送；拿不到就保持初始文案，不自己编。
+  window.__dshSplash = (text) => {
+    const el = document.getElementById('status')
+    if (el && typeof text === 'string') el.textContent = text
+  }
+</script>
+</body>
+</html>

@@ -32,6 +32,17 @@ const { pathToFileURL } = require('node:url')
 /** 这些路径由父进程在 fork 时通过 argv 传入，避免在两处各写一份默认值。 */
 const [, , REPO, DESKTOP] = process.argv
 
+/**
+ * CLI 包的根目录。两种布局都要认：
+ *  · 源码仓库 —— CLI 是工作区里的一个包，位于 `apps/cli`
+ *  · 部署闭包（`pnpm deploy` 产出，也是打包进安装程序的那份）—— CLI 包本身
+ *    就是根，`lib/` 与 `package.json` 直接在顶层
+ * 判据用 package.json 是否存在，而不是猜某个环境变量：布局是事实，不是配置。
+ */
+const CLI_ROOT = require('node:fs').existsSync(path.join(REPO, 'apps/cli/package.json'))
+  ? path.join(REPO, 'apps/cli')
+  : REPO
+
 /** utilityProcess 的 stdio 不转发，postMessage 是唯一能传出去的通道。 */
 const say = (type, payload) => { process.parentPort.postMessage({ type, payload }) }
 
@@ -43,7 +54,7 @@ const say = (type, payload) => { process.parentPort.postMessage({ type, payload 
  * 产品化时这里应改为打包期固化，而不是运行时扫描。
  */
 function resolveProfileBootFacade() {
-  const dir = path.join(REPO, 'apps/cli/lib')
+  const dir = path.join(CLI_ROOT, 'lib')
   const hits = readdirSync(dir)
     .filter((f) => f.startsWith('profile-boot-') && f.endsWith('.js'))
     .filter((f) => /export\s*\{\s*runProfile\s*\}/.test(readFileSync(path.join(dir, f), 'utf8')))
@@ -75,7 +86,7 @@ function pipePath() {
 
 async function main() {
   const { runProfile } = await import(resolveProfileBootFacade())
-  const reqCli = createRequire(path.join(REPO, 'apps/cli/package.json'))
+  const reqCli = createRequire(path.join(CLI_ROOT, 'package.json'))
   const { loadLayeredEnv } = await import(pathToFileURL(reqCli.resolve('@deepseek-ai/dsh-app-boot')).href)
 
   await runProfile({
