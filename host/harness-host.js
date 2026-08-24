@@ -25,7 +25,8 @@
 const http = require('node:http')
 const path = require('node:path')
 const { createRequire } = require('node:module')
-const { readdirSync, readFileSync } = require('node:fs')
+const fsSync = require('node:fs')
+const { readdirSync, readFileSync } = fsSync
 const { randomBytes } = require('node:crypto')
 const { pathToFileURL } = require('node:url')
 
@@ -84,10 +85,37 @@ function pipePath() {
   return process.platform === 'win32' ? `\\\\.\\pipe\\dsh-desktop-${id}` : `/tmp/dsh-desktop-${id}.sock`
 }
 
+/**
+ * 把替身安放到 profile 的 node_modules 里。
+ *
+ * loader 是相对 **profile 目录**解析插件的，不是相对运行时闭包 —— 替身躺在
+ * 闭包里 loader 也看不见。app-boot 会为 profile 维护一份扁平的 node_modules
+ * （每个插件一个链接），但它只认 profile 声明的那些 bundle，不会知道我们这个。
+ *
+ * 复制而不是链接：链接在跨平台与打包解压时行为不一致，而这个包只有百来行。
+ * 每次启动都覆盖一遍，这样升级壳之后 profile 里不会留着旧版本的替身。
+ */
+function installStubIntoProfile(dshHome) {
+  const source = path.join(DESKTOP, 'packages', 'webserver-ipc')
+  if (!fsSync.existsSync(source)) throw new Error(`找不到替身包：${source}`)
+  const targetDir = path.join(dshHome, 'profiles', 'node_modules', '@dsh-desktop')
+  const target = path.join(targetDir, 'webserver-ipc')
+  fsSync.rmSync(target, { recursive: true, force: true })
+  fsSync.mkdirSync(targetDir, { recursive: true })
+  fsSync.cpSync(source, target, {
+    recursive: true,
+    filter: (src) => !src.split(path.sep).includes('node_modules'),
+  })
+}
+
 async function main() {
   const { runProfile } = await import(resolveProfileBootFacade())
   const reqCli = createRequire(path.join(CLI_ROOT, 'package.json'))
   const { loadLayeredEnv } = await import(pathToFileURL(reqCli.resolve('@deepseek-ai/dsh-app-boot')).href)
+  const { resolveDshHome } = await import(pathToFileURL(reqCli.resolve('@deepseek-ai/dsh-home-paths')).href)
+
+  // 必须在 runProfile 之前：loader 一开始解析插件就要能找到它。
+  installStubIntoProfile(resolveDshHome())
 
   await runProfile({
     environment: loadLayeredEnv('dsh'),
