@@ -17,7 +17,8 @@ const path = require('node:path')
 const { randomUUID } = require('node:crypto')
 const fs = require('node:fs')
 const { proxy, unary, openStream } = require('./host/pipe-bridge.js')
-const { installMenu } = require('./host/menu.js')
+const { installMenu, currentAccent } = require('./host/menu.js')
+const { accentById } = require('./host/accents.js')
 
 const DESKTOP = __dirname
 
@@ -162,7 +163,7 @@ function serveFromPipe() {
     // WebApiClient 脚下的 WebSocket，晚一步就有连接已经走了原生路径。
     if ((result.headers['content-type'] ?? '').includes('text/html')) {
       const html = result.body.toString('utf8')
-      const tag = `<script>window.__dshTitlebarHeight=${TITLEBAR_HEIGHT}</script><script src="${SHIM_PATH}"></script>`
+      const tag = `<script>window.__dshTitlebarHeight=${TITLEBAR_HEIGHT};window.__dshAccent=${JSON.stringify(accentById(currentAccent()))}</script><script src="${SHIM_PATH}"></script>`
       const injected = html.includes('<head>') ? html.replace('<head>', `<head>
 ${tag}`) : `${tag}
 ${html}`
@@ -308,6 +309,9 @@ if (!app.requestSingleInstanceLock()) {
     try {
       // 语言写进 harness 自己的 locale 设置（namespace 'locale'，字段
       // 'preference'）—— 上游前端订阅它，界面立刻跟着变，不需要重启。
+      const pushAccent = (id) => {
+        if (win !== null && !win.isDestroyed()) win.webContents.send('dsh:accent', accentById(id))
+      }
       installMenu(async (locale) => {
         if (pipe === null) throw new Error('后台服务尚未就绪')
         const r = await unary(pipe, {
@@ -320,7 +324,7 @@ if (!app.requestSingleInstanceLock()) {
           }),
         })
         if (r.status !== 200) throw new Error(`settings.update 返回 HTTP ${r.status}`)
-      })
+      }, pushAccent)
       // 先把窗口开出来（启动画面），再去引导 —— 引导要几秒，那几秒不该是空白。
       createWindow()
       splashStatus('正在启动后台服务…')

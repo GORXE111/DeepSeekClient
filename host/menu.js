@@ -21,6 +21,7 @@
  */
 
 const { app, Menu, dialog } = require('electron')
+const { ACCENTS, accentById } = require('./accents.js')
 const path = require('node:path')
 const fs = require('node:fs')
 
@@ -57,6 +58,7 @@ const STRINGS = {
     edit: '编辑',
     undo: '撤销', redo: '重做', cut: '剪切', copy: '复制', paste: '粘贴', selectAll: '全选',
     language: '语言', chinese: '简体中文', english: 'English',
+    appearance: '强调色',
     about: '关于 DeepSeek Client', services: '服务',
     hide: '隐藏', hideOthers: '隐藏其他', unhide: '全部显示', quit: '退出',
     restartHint: '菜单语言已切换，但界面语言没能同步。',
@@ -66,6 +68,7 @@ const STRINGS = {
     edit: 'Edit',
     undo: 'Undo', redo: 'Redo', cut: 'Cut', copy: 'Copy', paste: 'Paste', selectAll: 'Select All',
     language: 'Language', chinese: '简体中文', english: 'English',
+    appearance: 'Accent',
     about: 'About DeepSeek Client', services: 'Services',
     hide: 'Hide', hideOthers: 'Hide Others', unhide: 'Show All', quit: 'Quit',
     restartHint: 'The menu language changed, but the interface language could not be synced.',
@@ -79,7 +82,11 @@ const STRINGS = {
  *   把语言写进 harness 的 locale 设置。菜单只负责发出意图，怎么送到运行时是
  *   调用方的事 —— 这个模块不该知道管道的存在。
  */
-function installMenu(applyLocale) {
+function currentAccent() {
+  return accentById(readPrefs().accent).id
+}
+
+function installMenu(applyLocale, applyAccent) {
   const locale = currentLocale()
   const t = STRINGS[locale]
   const mac = process.platform === 'darwin'
@@ -89,15 +96,28 @@ function installMenu(applyLocale) {
       label: t.chinese,
       type: 'radio',
       checked: locale === 'zh',
-      click: () => { switchLocale('zh', applyLocale) },
+      click: () => { switchLocale('zh', applyLocale, applyAccent) },
     },
     {
       label: t.english,
       type: 'radio',
       checked: locale === 'en',
-      click: () => { switchLocale('en', applyLocale) },
+      click: () => { switchLocale('en', applyLocale, applyAccent) },
     },
   ]
+
+  // 强调色只改两个别名令牌，切换是即时的 —— 所以不必提示重启，点完就该看见变化。
+  const accent = currentAccent()
+  const appearanceSubmenu = ACCENTS.map((a) => ({
+    label: locale === 'zh' ? a.zh : a.en,
+    type: 'radio',
+    checked: accent === a.id,
+    click: () => {
+      writePrefs({ ...readPrefs(), accent: a.id })
+      installMenu(applyLocale, applyAccent)
+      applyAccent?.(a.id)
+    },
+  }))
 
   /** @type {Electron.MenuItemConstructorOptions[]} */
   const template = []
@@ -110,6 +130,7 @@ function installMenu(applyLocale) {
         { label: t.about, role: 'about' },
         { type: 'separator' },
         { label: t.language, submenu: languageSubmenu },
+        { label: t.appearance, submenu: appearanceSubmenu },
         { type: 'separator' },
         { label: t.services, role: 'services' },
         { type: 'separator' },
@@ -139,9 +160,10 @@ function installMenu(applyLocale) {
 
   // 非 macOS 上没有应用菜单，语言与退出得有个去处。
   if (!mac) {
+    template.push({ label: t.language, submenu: languageSubmenu })
     template.push({
-      label: t.language,
-      submenu: [...languageSubmenu, { type: 'separator' }, { label: t.quit, role: 'quit' }],
+      label: t.appearance,
+      submenu: [...appearanceSubmenu, { type: 'separator' }, { label: t.quit, role: 'quit' }],
     })
   }
 
@@ -158,10 +180,10 @@ function installMenu(applyLocale) {
  * 早先这里只换菜单文字并提示重启 —— 那等于给用户两个语言开关，其中一个还不
  * 管用。发现上游已有之后就没有理由那么做了。
  */
-function switchLocale(next, applyLocale) {
+function switchLocale(next, applyLocale, applyAccent) {
   if (currentLocale() === next) return
   writePrefs({ ...readPrefs(), locale: next })
-  installMenu(applyLocale)
+  installMenu(applyLocale, applyAccent)
   Promise.resolve(applyLocale?.(next)).catch((err) => {
     // 界面没跟着变的话要说出来，否则用户只会觉得"点了没用"。
     void dialog.showMessageBox({
@@ -173,4 +195,4 @@ function switchLocale(next, applyLocale) {
   })
 }
 
-module.exports = { installMenu, currentLocale, STRINGS }
+module.exports = { installMenu, currentLocale, currentAccent, STRINGS }

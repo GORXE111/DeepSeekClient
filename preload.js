@@ -54,6 +54,12 @@ contextBridge.exposeInMainWorld('__dshIpc', {
     return id
   },
 
+  /**
+   * 订阅强调色变化。壳改了强调色之后页面要立刻跟上，重载会丢掉正在编辑的
+   * 内容，所以走推送而不是刷新。
+   */
+  onAccent: (cb) => { ipcRenderer.on('dsh:accent', (_e, accent) => { cb(accent) }) },
+
   /** 关闭一条下行流；重复关闭是安全的。 */
   closeStream: (id) => {
     streams.delete(id)

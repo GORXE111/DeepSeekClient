@@ -171,6 +171,39 @@
   if (document.body) mountBar()
   else document.addEventListener('DOMContentLoaded', mountBar, { once: true })
 
+  // ---------------------------------------------------------------- 强调色
+
+  /**
+   * 应用强调色。
+   *
+   * 上游把强调色收敛在两个别名令牌上，亮暗两套调色板分别由 `body` 与
+   * `body[data-ds-dark-theme]` 选中，所以两半都要写 —— 只写一半的话，用户切到
+   * 另一半就会看到默认色回来，像是设置没保存。
+   *
+   * 默认档不写任何令牌：还原上游品牌色的正确做法是"不覆盖"，而不是拿一组值去
+   * 覆盖成看起来一样的东西。
+   */
+  const accentStyle = document.createElement('style')
+  document.head.appendChild(accentStyle)
+
+  const applyAccent = (accent) => {
+    if (!accent || accent.light === undefined) { accentStyle.textContent = ''; return }
+    accentStyle.textContent = `
+      body {
+        --dsw-alias-state-business-primary: ${accent.light.primary} !important;
+        --dsw-alias-state-business-tertiary: ${accent.light.tertiary} !important;
+      }
+      body[data-ds-dark-theme] {
+        --dsw-alias-state-business-primary: ${accent.dark.primary} !important;
+        --dsw-alias-state-business-tertiary: ${accent.dark.tertiary} !important;
+      }
+    `
+  }
+
+  // 首屏的值由主进程随入口页注入，避免先闪一下默认色再变。
+  applyAccent(globalThis.__dshAccent)
+  ipc.onAccent?.(applyAccent)
+
   // ---------------------------------------------------------------- 品牌
 
   /**
