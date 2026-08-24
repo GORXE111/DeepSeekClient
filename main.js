@@ -1,256 +1,241 @@
 'use strict'
 
-// DeepSeek Harness 桌面壳（方案 A）。
+// DeepSeek Harness 桌面壳。
 //
-// 这一版不改 harness 一行代码：主进程把现成的 web profile 当子进程拉起来，让它
-// 绑到一个由系统挑选的端口上，再把窗口指向那个 URL。用户看不到浏览器，也看不到
-// 端口号；harness 内部仍然是 HTTP + WebSocket 那套载体。
+// 拓扑：渲染进程 (file://) ←IPC→ 主进程 ←命名管道→ utilityProcess(harness)。
+// 全程没有 TCP 端口。三处关键决定的来由记在 docs/architecture-findings.md：
 //
-// 端口刻意不写死。写死意味着第二个实例会撞端口，而 --port 0 让内核挑一个空闲的，
-// 代价只是要从 stdout 把它读回来 —— 那行 URL 是 shell 自己打印的，属于公开约定。
-//
-// 真正去掉端口是方案 B 的事：换一个走 IPC 的 AbstractApiClient 子类，dist 由
-// file:// 加载，webserver 插件整个摘掉。届时这个文件里 spawn 与 URL 解析的部分
-// 会被 host 的进程内引导替换，窗口与生命周期管理这部分可以原样留用。
+//  · 为什么 harness 跑在 utilityProcess 而不是主进程 —— Electron 的 V8 嵌入不
+//    暴露 Cordis loader 需要的 Node 内部符号（第 1、2 条）。
+//  · 为什么载体是命名管道而不是伪造的 node 对象 —— 伪造补不完，真实 socket
+//    一次就通，而管道没有端口号（第 10 条）。
+//  · 为什么渲染侧靠垫片而不是改上游 —— 载体在客户端插件里写死，但它脚下只有
+//    fetch 与 WebSocket 两个全局（renderer/dsh-ipc-shim.js）。
 
-const { app, BrowserWindow, ipcMain, shell, dialog } = require('electron')
-const { spawn } = require('node:child_process')
-const { randomUUID } = require('node:crypto')
+const { app, BrowserWindow, ipcMain, protocol, shell, dialog, utilityProcess } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
+const { proxy, unary, openStream } = require('./host/pipe-bridge.js')
 
-// ---------------------------------------------------------------- 配置
-
-/** harness 仓库根目录；DSH_DESKTOP_REPO 覆盖，便于把壳挪到别处。 */
+/** harness 仓库根目录；DSH_DESKTOP_REPO 覆盖。 */
 const REPO = process.env.DSH_DESKTOP_REPO ?? 'E:\\DEEPSEEK\\deepseek-harness'
+const DESKTOP = __dirname
 
-/**
- * 跑 harness 用的 Node。必须是 22.19+：scripts 与 CLI 用到 `import.meta.main`，
- * 在更旧的 Node 上它是 undefined，入口会静默不执行、退出码还是 0。
- * Electron 自带的 Node 不一定够新，所以这里显式指向外部解释器，顺带把 harness
- * 的崩溃与壳隔离开。
- */
-const NODE = process.env.DSH_DESKTOP_NODE ?? 'E:\\DEEPSEEK\\node24\\node.exe'
+/** harness 引导到报告管道地址的容忍时间。首次加载插件树较慢，给足。 */
+const BOOT_TIMEOUT_MS = 120_000
 
-/** harness 启动到打印 URL 的容忍时间。首次 tsx 转译较慢，给足。 */
-const BOOT_TIMEOUT_MS = 90_000
-
-// ---------------------------------------------------------------- 状态
-
-/** @type {import('node:child_process').ChildProcess | null} */
+/** @type {import('electron').UtilityProcess | null} */
 let harness = null
 /** @type {BrowserWindow | null} */
 let win = null
-/** 主动退出中：子进程此时的非零退出码是我们自己造成的，不该报错给用户。 */
+let pipe = null
 let quitting = false
 
-// ---------------------------------------------------------------- harness 生命周期
+/** 每条下行流的关闭句柄，按渲染侧生成的 id 索引。 */
+const streams = new Map()
+
+// ---------------------------------------------------------------- harness
 
 /**
- * 拉起 web profile 并等它打印监听地址。
- * @returns {Promise<string>} 形如 http://127.0.0.1:53124 的 origin
+ * 在 utilityProcess 里引导 harness。
+ *
+ * `--expose-internals` 不是调试开关而是硬需求：Cordis 的 loader 要相对 baseUrl
+ * 解析插件，为此需要 Node 内部的 ESM 加载器。少了它，每个插件包都会解析失败。
  */
 function startHarness() {
-  const entry = path.join(REPO, 'apps', 'cli', 'src', 'bin.ts')
-  if (!fs.existsSync(entry)) {
-    return Promise.reject(new Error(`找不到 harness 入口：${entry}\n设置 DSH_DESKTOP_REPO 指向仓库根目录。`))
-  }
-  if (!fs.existsSync(NODE)) {
-    return Promise.reject(new Error(`找不到 Node 解释器：${NODE}\n设置 DSH_DESKTOP_NODE 指向 22.19+ 的 node。`))
-  }
-
+  const entry = path.join(DESKTOP, 'host', 'harness-host.js')
   return new Promise((resolve, reject) => {
-    harness = spawn(
-      NODE,
-      ['--import', 'tsx/esm', entry, 'web', '--no-open', '--port', '0'],
-      // cwd 必须是仓库根：tsx 与工作区依赖都从这里解析。
-      { cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true },
-    )
+    harness = utilityProcess.fork(entry, [REPO, DESKTOP], { execArgv: ['--expose-internals'] })
 
     let settled = false
-    let log = ''
-
     const timer = setTimeout(() => {
       if (settled) return
       settled = true
-      reject(new Error(`harness 在 ${BOOT_TIMEOUT_MS / 1000}s 内没有报告监听地址。\n\n输出：\n${log.slice(-2000)}`))
+      reject(new Error(`harness 在 ${BOOT_TIMEOUT_MS / 1000}s 内没有报告管道地址。`))
     }, BOOT_TIMEOUT_MS)
 
-    // URL 行由 CLI shell 打印（"dsh web: http://127.0.0.1:PORT"）。只认回环地址：
-    // 壳绝不该把窗口指到一个非本机的 origin 上去。
-    const scan = (chunk) => {
-      const text = String(chunk)
-      log += text
-      process.stdout.write(`[harness] ${text}`)
-      if (settled) return
-      const hit = /http:\/\/(?:127\.0\.0\.1|localhost):(\d+)/.exec(text)
-      if (hit === null) return
-      settled = true
-      clearTimeout(timer)
-      resolve(`http://127.0.0.1:${hit[1]}`)
-    }
-
-    harness.stdout.on('data', scan)
-    harness.stderr.on('data', scan)
-
-    harness.on('error', (err) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      reject(err)
-    })
-
-    harness.on('exit', (code, signal) => {
-      const dead = harness
-      harness = null
-      if (settled) {
-        // 已经在跑了才退出：这是运行期崩溃，不是启动失败。
-        if (!quitting) reportHarnessDeath(code, signal, log)
+    harness.on('message', (msg) => {
+      if (msg?.type === 'error') { console.error('[harness]', msg.payload); return }
+      if (msg?.type === 'fatal') {
+        if (settled) { reportHarnessDeath(msg.payload); return }
+        settled = true
+        clearTimeout(timer)
+        reject(new Error(msg.payload))
         return
       }
+      if (msg?.type !== 'ready' || settled) return
       settled = true
       clearTimeout(timer)
-      reject(new Error(`harness 未能启动就退出了（code ${code}${signal ? `, signal ${signal}` : ''}）。\n\n输出：\n${log.slice(-2000)}`))
-      void dead
+      console.log(`[harness] 就绪 · 管道 ${msg.payload.pipe}`)
+      console.log(`[harness] 路由 ${msg.payload.routes.join(' | ')}`)
+      console.log(`[harness] 下行 ${msg.payload.upgrades.join(' | ')}`)
+      resolve(msg.payload.pipe)
+    })
+
+    harness.on('exit', (code) => {
+      harness = null
+      if (settled) { if (!quitting) reportHarnessDeath(`后台服务退出，code ${code}`) ; return }
+      settled = true
+      clearTimeout(timer)
+      reject(new Error(`harness 未能启动就退出了（code ${code}）`))
     })
   })
 }
 
-/**
- * 结束 harness 及其子孙进程。
- * Windows 上 child.kill() 只结束被 spawn 的那一个，tsx 之下的进程会留成孤儿，
- * 端口也跟着不放；taskkill /T 才是这里唯一可靠的做法。
- */
-function stopHarness() {
-  const child = harness
-  if (child === null || child.pid === undefined) return
-  harness = null
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true })
-    return
-  }
-  child.kill('SIGTERM')
-}
-
-/** 运行期崩溃：告诉用户发生了什么，而不是留一个白窗口。 */
-function reportHarnessDeath(code, signal, log) {
-  const detail = `退出码 ${code}${signal ? `，信号 ${signal}` : ''}`
+function reportHarnessDeath(detail) {
   if (win !== null && !win.isDestroyed()) win.destroy()
-  dialog.showErrorBox('DeepSeek Harness 已停止', `后台服务意外退出（${detail}）。\n\n最后的输出：\n${log.slice(-1500)}`)
+  dialog.showErrorBox('DeepSeek Harness 已停止', String(detail))
   app.quit()
 }
 
-// ---------------------------------------------------------------- IPC 载体（方案 B 验证）
+// ---------------------------------------------------------------- 页面来源
 
-/** 当前 harness 的 origin；IPC 桥要用，窗口关掉也不影响它的有效性。 */
-let harnessOrigin = null
+/** 页面的来源。用自有 scheme 而不是 file://，理由见 serveFromPipe。 */
+const APP_ORIGIN = 'dsh://app'
+
+/** 垫片的对外路径。放在自有 scheme 下，与页面同源。 */
+const SHIM_PATH = '/dsh-ipc-shim.js'
 
 /**
- * 渲染进程 → 主进程 → harness 的 unary 调用。
+ * 把渲染进程的每一个请求转到管道上。
  *
- * 这一版仍然把请求转发到子进程的 HTTP 端点，因为 harness 现在是独立进程，主进程
- * 手里没有 `ctx.apiProxy` 对象。方案 B 落地时这里换成
- * `toFetchHandler(ctx.apiProxy).fetch(request)` —— 渲染侧的接口一个字都不用改，
- * 这正是验证要证明的：载体是可替换的，协议不受影响。
+ * 一开始走的是 file:// —— 上游 resolveBase() 显式处理了 origin 为 null 的情形，
+ * 看起来正是为此准备的。但前端还要从 /plugins/ 动态加载插件 bundle，那些不是
+ * dist 里的文件而是服务器生成的，且由 <script> 标签加载 —— 垫片只能拦 fetch，
+ * 拦不到标签。file:// 这条路因此走不通。
  *
- * 关键在请求头的形状，而不是它走了哪条线：
- *  - Host 由 URL 自动填成 127.0.0.1:<port>，是回环权威 → 过 Host 栅栏
- *  - 不带 Origin、不带 Sec-Fetch-* → 过跨站栅栏与 Origin 栅栏
- * 因此 PRIVILEGED_METHODS 那道 `isTrustedApiRequest(request, [])` 会**正常放行**，
- * 而不是因为缺少请求头被绕过。真正的 IPC 桥必须合成同样的头，否则特权方法要么
- * 全被拒，要么在一道形同虚设的栅栏后面敞开。
+ * 自定义协议则覆盖渲染进程发出的全部请求：入口页、assets、/plugins bundle 与
+ * /api 调用都从同一个地方转发，页面也因此有了正常的同源关系。unary 的 fetch
+ * 垫片随之不再需要 —— 同源 fetch 自然落进这里。
  */
-async function callApi(method, payload) {
-  if (harnessOrigin === null) return { ok: false, error: 'harness 尚未就绪' }
-  if (typeof method !== 'string' || !/^[a-zA-Z]+\.[a-zA-Z]+$/.test(method)) {
-    // 方法名直接进 URL 路径，必须先约束形状，否则渲染进程可以拼出任意路径。
-    return { ok: false, error: `非法方法名：${String(method)}` }
-  }
-  const message = { type: 'client-request', rpcId: randomUUID(), method, payload: payload ?? {} }
-  try {
-    const res = await fetch(`${harnessOrigin}/api/${method}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(message),
+function serveFromPipe() {
+  protocol.handle('dsh', async (request) => {
+    if (pipe === null) return new Response('harness 尚未就绪', { status: 503 })
+    const url = new URL(request.url)
+
+    // 垫片本身来自本地文件，不经管道。
+    if (url.pathname === SHIM_PATH) {
+      return new Response(fs.readFileSync(path.join(DESKTOP, 'renderer', 'dsh-ipc-shim.js')), {
+        status: 200,
+        headers: { 'content-type': 'text/javascript; charset=utf-8' },
+      })
+    }
+    const body = request.method === 'GET' || request.method === 'HEAD'
+      ? undefined
+      : Buffer.from(await request.arrayBuffer())
+    const result = await proxy(pipe, {
+      // 空路径要补成 '/'：上游的 fallback 认这个路径去发入口页。
+      path: (url.pathname === '' ? '/' : url.pathname) + url.search,
+      method: request.method,
+      headers: { 'content-type': request.headers.get('content-type') ?? 'application/json' },
+      body,
     })
-    const text = await res.text()
-    let body
-    try { body = JSON.parse(text) } catch { body = text }
-    return { ok: true, status: res.status, body }
-  } catch (err) {
-    return { ok: false, error: String(err instanceof Error ? err.message : err) }
-  }
+    if (result.error !== undefined) return new Response(result.error, { status: 502 })
+
+    // 入口页要带上垫片，而且必须排在页面任何脚本之前 —— 它换掉的是
+    // WebApiClient 脚下的 WebSocket，晚一步就有连接已经走了原生路径。
+    if ((result.headers['content-type'] ?? '').includes('text/html')) {
+      const html = result.body.toString('utf8')
+      const tag = `<script src="${SHIM_PATH}"></script>`
+      const injected = html.includes('<head>') ? html.replace('<head>', `<head>
+${tag}`) : `${tag}
+${html}`
+      const headers = { ...result.headers }
+      // 长度变了：留着旧的 content-length 会让响应被截断。
+      delete headers['content-length']
+      return new Response(injected, { status: result.status, headers })
+    }
+
+    // 其余逐字透传：content-type 决定浏览器怎么解析这份 bundle，
+    // 猜错会让一个本来正确的响应以脚本语法错误的形式失败。
+    return new Response(result.body, { status: result.status, headers: result.headers })
+  })
 }
 
+// ---------------------------------------------------------------- IPC 载体
+
 function registerBridge() {
-  ipcMain.handle('dsh:api', (_event, args) => callApi(args?.method, args?.payload))
-  ipcMain.handle('dsh:origin', () => harnessOrigin)
+  ipcMain.handle('dsh:unary', async (_event, req) => {
+    if (pipe === null) return { status: 0, body: '', error: 'harness 尚未就绪' }
+    // 路径由渲染进程给出，必须约束形状：它直接进管道请求的 path。
+    if (typeof req?.path !== 'string' || !req.path.startsWith('/api/') || req.path.includes('..')) {
+      return { status: 0, body: '', error: `非法路径 ${String(req?.path)}` }
+    }
+    return unary(pipe, req)
+  })
+
+  ipcMain.handle('dsh:stream-open', (event, req) => {
+    if (pipe === null) throw new Error('harness 尚未就绪')
+    if (typeof req?.path !== 'string' || !req.path.startsWith('/api/') || req.path.includes('..')) {
+      throw new Error(`非法路径 ${String(req?.path)}`)
+    }
+    const id = req.id
+    const send = (channel, ...args) => {
+      if (!event.sender.isDestroyed()) event.sender.send(channel, id, ...args)
+    }
+    const close = openStream(pipe, req.path, {
+      onOpen: () => send('dsh:stream-open'),
+      onFrame: (text) => send('dsh:stream-frame', text),
+      onClose: () => { streams.delete(id); send('dsh:stream-close') },
+    })
+    streams.set(id, close)
+    return id
+  })
+
+  ipcMain.on('dsh:stream-close-request', (_event, id) => {
+    const close = streams.get(id)
+    streams.delete(id)
+    close?.()
+  })
 }
 
 // ---------------------------------------------------------------- 窗口
 
-function createWindow(origin) {
+function createWindow() {
   win = new BrowserWindow({
     width: 1280,
     height: 860,
     minWidth: 720,
     minHeight: 520,
-    // 内容就绪前不显示，避免先闪一下空白底再出界面。
     show: false,
     backgroundColor: '#ffffff',
     title: 'DeepSeek Harness',
     webPreferences: {
-      // 渲染进程只加载 harness 自己的前端，不需要 Node 能力；这三项是默认值，
-      // 显式写出来是为了让"壳不给页面额外权限"成为一条读得到的约定。
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(DESKTOP, 'preload.js'),
     },
   })
 
   win.once('ready-to-show', () => { win?.show() })
   win.on('closed', () => { win = null })
 
-  // 外部链接交给系统浏览器：这个窗口是应用，不是通用浏览器。
+  // 这个窗口是应用，不是通用浏览器：外链交给系统浏览器，站内导航不得离开 dist。
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
-  // 同理，窗口内的导航不得离开 harness 自己的 origin。
   win.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(origin)) {
+    if (!url.startsWith(APP_ORIGIN)) {
       event.preventDefault()
       if (/^https?:\/\//.test(url)) void shell.openExternal(url)
     }
   })
 
-  void win.loadURL(origin)
+  void win.loadURL(`${APP_ORIGIN}/`)
 }
 
-/**
- * 载体验证窗口：用 file:// 加载，因此它和方案 B 里真正的渲染进程处境完全一致
- * —— 一个不透明源的页面，除了 preload 那道缝之外没有任何通往宿主的路。
- */
-function createSpikeWindow() {
-  win = new BrowserWindow({
-    width: 900,
-    height: 760,
-    title: 'IPC 载体验证',
-    webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      sandbox: true,
-      preload: path.join(__dirname, 'preload.js'),
-    },
-  })
-  win.on('closed', () => { win = null })
-  void win.loadFile(path.join(__dirname, 'spike.html'))
-}
+// ---------------------------------------------------------------- 生命周期
 
-// ---------------------------------------------------------------- 应用生命周期
+// 必须在 app ready 之前声明：standard 让它有正常的同源语义，secure 让页面被
+// 当作安全上下文（crypto.randomUUID 等要用），supportFetchAPI 让页面的 fetch
+// 也走 protocol.handle。
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'dsh',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true },
+}])
 
-// 第二个实例没有意义：两个壳会各自拉起一份 harness，抢同一个 DSH_HOME。
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
@@ -262,12 +247,11 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     try {
-      const origin = await startHarness()
-      harnessOrigin = origin
+      // 顺序有讲究：入口页要经管道向已启动的 harness 取，所以必须先引导。
+      pipe = await startHarness()
+      serveFromPipe()
       registerBridge()
-      // DSH_DESKTOP_SPIKE=1 打开载体验证页（file:// 加载）而不是产品界面。
-      if (process.env.DSH_DESKTOP_SPIKE === '1') { createSpikeWindow(); return }
-      createWindow(origin)
+      createWindow()
     } catch (err) {
       dialog.showErrorBox('DeepSeek Harness 启动失败', String(err instanceof Error ? err.message : err))
       app.quit()
@@ -275,7 +259,11 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('window-all-closed', () => { app.quit() })
-  app.on('before-quit', () => { quitting = true; stopHarness() })
-  // 壳被强杀时兜底，避免留下占着端口的孤儿进程。
-  process.on('exit', stopHarness)
+  app.on('before-quit', () => {
+    quitting = true
+    for (const close of streams.values()) close()
+    streams.clear()
+    harness?.postMessage('shutdown')
+    harness?.kill()
+  })
 }

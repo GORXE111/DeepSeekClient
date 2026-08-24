@@ -149,6 +149,25 @@ events.mux   ✔ 握手成功 · 收到 8 帧
 
 至此整个载体在管道上完整可用：unary + 两条下行流，全程零 TCP 端口。
 
+## 12. 渲染侧走自定义协议，不是 file://
+
+上游 `resolveBase()` 显式处理了 `origin === 'null'` 的情形，看着正是为 `file://` 准备的，所以先试了那条路。三个问题接连暴露：
+
+1. Chromium 给 `file://` 页面报的 origin 是 `"file://"` 而不是字面量 `"null"`，于是 `resolveBase()` 原样返回它，请求变成 `file:///api/...`。
+2. 构建产物的资源是根绝对路径（`/assets/…`），`file://` 下 `/` 指向磁盘根，全部 `ERR_FILE_NOT_FOUND`。
+3. 致命的一条：前端还要从 `/plugins/` 动态加载插件 bundle —— 那些不是 dist 里的文件而是服务器生成的，**且由 `<script>` 标签加载**。垫片只能拦 `fetch`，拦不到标签。
+
+所以 `file://` 走不通。改用自定义 scheme（`dsh://app`）加 `protocol.handle`：渲染进程发出的每一个请求 —— 入口页、assets、`/plugins` bundle、`/api` 调用 —— 都从同一处转发到管道，页面也因此有了正常的同源关系。
+
+连带好处：unary 的 fetch 垫片不再需要，同源 `fetch` 自然落进 `protocol.handle`。垫片只剩 WebSocket 一半（自定义协议没有 ws 对应物）。
+
+还有两处踩到才知道的：
+
+- **入口页不能直接读 `dist/index.html`**。服务器发出的那份是原始文件再经 `tapIndex` 变换，模块加载器门面与 `window.__DSH_BOOT__` 名单都在那一步注入；直接读会得到一个看似正常、实则报 `window.__ModuleLoader__ bootstrap facade is missing` 的空白页。经管道 `GET /` 取，等于让上游自己注入完。
+- **注入垫片后要删掉 `content-length`**，否则响应被按旧长度截断。
+
+实测：界面完整渲染，工作区与历史会话都在，模型选择器显示 DeepSeek-V4-Flash —— 侧边栏能有数据，说明下行流的 `session/projection` 帧确实送达。正常启动（不带调试端口）时 electron 监听的 TCP 端口数为 0。
+
 ## 历史：伪造 req/res 那条弯路
 
 把上游捕获到的 `route.handler(req, res)` 用伪造的 node 对象喂进去，会停在一个精确的位置：
@@ -171,4 +190,4 @@ events.mux   ✔ 握手成功 · 收到 8 帧
 
 - **载体加共享密钥**：管道默认 ACL 允许本机其他进程连接，与原来的回环端口同级。每次启动生成一个随机头、由 harness 侧校验，可以把本机其他进程挡在外面。
 - **门面块解析改为打包期固化**：见第 8 条。
-- **渲染侧**：`ElectronApiClient extends AbstractApiClient`，`doFetch` 走 IPC；`openMux` / `openHost` 照搬 `WebApiClient.readWebSocket` 的形状（inbox + wake + abort 清理），把 WebSocket 换成 IPC push 通道。
+- **打包**：electron-builder、Windows 签名、自动更新；harness 产物随包分发。
