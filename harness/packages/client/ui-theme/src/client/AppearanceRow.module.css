@@ -1,0 +1,174 @@
+/* Appearance row (figma 'Frame 2117131228': title + cube row, column gap 8,
+ * pad 16/0, hairline separator; the section column strips it when last). */
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.cubeRow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Appearance cube (figma '.Selector Cube' 276x82 r16, pad 20/32, centered
+ * icon-over-label column, gap 4); flexed down from the figma width so all
+ * three sit on one row in the 800 panel, wrapping when narrower. */
+.themeCube {
+  box-sizing: border-box;
+  flex: 1 1 180px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 20px 32px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 16px;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.themeCube:hover:not(.selected) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* Selected cube: #F5F6F7 fill + #ADB2B8 border (static token — the bluish-400
+ * step has no alias-layer name). */
+.selected {
+  background: var(--dsw-alias-bg-module-platform);
+  border-color: var(--dsw-static-neutral-bluish-400);
+}
+
+/* Sub-headings for the palette / accent / backdrop blocks. Lighter than the
+ * row title so the row still reads as one settings item rather than four. */
+.subTitle {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.swatchRow,
+.controlRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Palette swatch: colour is the whole control, so selection is carried by a
+ * ring outside the fill rather than a border, which would eat into the colour
+ * being previewed. */
+.swatch {
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2);
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+
+.swatch:hover {
+  transform: scale(1.08);
+}
+
+.swatchSelected {
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: none;
+}
+
+/* Native colour input, trimmed of its default chrome so it reads as a swatch. */
+.colorInput {
+  width: 34px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+
+.ghostButton {
+  padding: 4px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.ghostButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.ghostButton:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+.hint {
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-caption);
+}
+
+/* Backdrop chip: label plus a preview of the gradient it selects. */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.chip:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.chipSelected {
+  background: var(--dsw-alias-bg-module-platform);
+  border-color: var(--dsw-static-neutral-bluish-400);
+}
+
+.chipSwatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2);
+}
+
+.slider {
+  width: 160px;
+  accent-color: var(--dsw-alias-state-business-primary);
+}

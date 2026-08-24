@@ -1,0 +1,56 @@
+/** `settings.theme` namespace dictionaries (the Appearance row's copy). */
+
+/** Simplified Chinese dictionary (the key-set source of truth). */
+export const zh = {
+  'appearance.title': '外观',
+  'appearance.light': '浅色',
+  'appearance.dark': '深色',
+  'appearance.system': '跟随系统',
+  'palette.title': '主题配色',
+  'palette.default': '默认',
+  'palette.warm': '暖褐',
+  'palette.forest': '森绿',
+  'palette.midnight': '午夜',
+  'palette.sakura': '樱',
+  'palette.slate': '石墨',
+  'accent.title': '强调色',
+  'accent.follow': '跟随配色',
+  'accent.hint': '强调色独立于配色：可以用森绿的底配紫色的按钮。',
+  'chat.title': '聊天背景',
+  'chat.none': '无',
+  'chat.custom': '自定义颜色',
+  'chat.aurora': '极光',
+  'chat.dusk': '暮色',
+  'chat.mint': '薄荷',
+  'chat.ember': '余烬',
+  'chat.strength': '浓度',
+} satisfies Record<string, string>
+
+/** The settings.theme namespace key union. */
+export type ThemeKey = keyof typeof zh
+
+/** English dictionary, checked complete against the zh key set. */
+export const en = {
+  'appearance.title': 'Appearance',
+  'appearance.light': 'Light',
+  'appearance.dark': 'Dark',
+  'appearance.system': 'System',
+  'palette.title': 'Palette',
+  'palette.default': 'Default',
+  'palette.warm': 'Warm',
+  'palette.forest': 'Forest',
+  'palette.midnight': 'Midnight',
+  'palette.sakura': 'Sakura',
+  'palette.slate': 'Slate',
+  'accent.title': 'Accent',
+  'accent.follow': 'Follow palette',
+  'accent.hint': 'The accent is independent of the palette.',
+  'chat.title': 'Chat backdrop',
+  'chat.none': 'None',
+  'chat.custom': 'Custom colour',
+  'chat.aurora': 'Aurora',
+  'chat.dusk': 'Dusk',
+  'chat.mint': 'Mint',
+  'chat.ember': 'Ember',
+  'chat.strength': 'Strength',
+} satisfies Record<ThemeKey, string>
