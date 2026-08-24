@@ -1,43 +1,30 @@
 {
-  "name": "deepseek-client",
+  "name": "deepseek-client-workspace",
   "version": "0.1.0",
-  "description": "DeepSeek Harness 桌面客户端：装上就能用，只需配置 API 或本地模型。",
+  "private": true,
+  "description": "DeepSeek Client 全套源码：harness（前端+后端）与 Electron 壳同仓库。",
   "license": "MIT",
   "author": "linyang",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/GORXE111/DeepSeekClient.git"
   },
-  "main": "main.js",
-  "bin": {
-    "deepseek-client": "bin/cli.js"
-  },
-  "files": [
-    "bin",
-    "host",
-    "renderer",
-    "build/icon.png",
-    "main.js",
-    "preload.js",
-    "desktop.patch.yml"
-  ],
   "engines": {
-    "node": ">=22.19"
+    "node": ">=24"
   },
   "scripts": {
-    "start": "electron .",
-    "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac",
-    "build:linux": "electron-builder --linux",
-    "icon": "electron tools/render-icon.js"
-  },
-  "dependencies": {
-    "@deepseek-ai/dsh": "0.1.1-rc.2",
-    "@deepseek-ai/dsh-base": "0.1.1-rc.2",
-    "@deepseek-ai/dsh-web-app": "0.1.1-rc.2",
-    "electron": "43.4.1"
-  },
-  "devDependencies": {
-    "electron-builder": "^26.15.3"
+    "setup": "npm run setup:harness && npm run setup:desktop",
+    "setup:harness": "npx pnpm -C harness install",
+    "setup:desktop": "npm --prefix desktop install",
+    "build:harness": "npx pnpm -C harness run build",
+    "build:runtime": "node tools/build-runtime.js",
+    "build:win": "npm --prefix desktop run build:win",
+    "build:mac": "npm --prefix desktop run build:mac",
+    "build:linux": "npm --prefix desktop run build:linux",
+    "build": "npm run build:harness && npm run build:runtime && npm run build:win",
+    "start": "npm --prefix desktop start",
+    "test:harness": "npx pnpm -C harness run test",
+    "lint:harness": "npx pnpm -C harness run lint",
+    "typecheck:harness": "npx pnpm -C harness run typecheck"
   }
 }

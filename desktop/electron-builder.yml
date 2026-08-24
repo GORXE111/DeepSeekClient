@@ -2,9 +2,9 @@
 #
 # 三件事值得先说清楚：
 #
-# 1. harness 运行时是普通依赖，但必须用 asarUnpack 留在 asar 之外 —— Node 要按
-#    真实路径解析它，打进 asar 里 createRequire 就找不到。这样 npm 安装与安装包
-#    两种分发共用同一条解析路径，不必在代码里分叉。
+# 1. harness 运行时闭包走 extraResources，整个躺在 asar 之外。Cordis 的 loader
+#    按真实文件路径解析插件，app-boot 还会据此建一棵符号链接树，而链接由操作
+#    系统解析，穿不过 asar 归档 —— 归档里的运行时无论怎么解包都会在某处断掉。
 #
 # 2. 不配签名。这台机器上没有 Apple Developer 证书（security find-identity
 #    报 0 valid identities），Windows 也没有代码签名证书。未签名的包能跑，但
@@ -19,7 +19,8 @@ productName: DeepSeek Client
 copyright: Copyright © 2026 linyang
 
 directories:
-  output: dist
+  # 产物出到仓库根，与两份源码（harness/ desktop/）分开放。
+  output: ../dist
   buildResources: build
 
 # 壳自己的代码。runtime/ 与 probe*/ 刻意排除：前者走 extraResources，
@@ -36,9 +37,21 @@ files:
   - '!docs/**'
   - '!tools/**'
 
-# harness 的包必须解包：Cordis 的 loader 按真实文件路径解析插件。
+# 不重建原生模块。唯一的原生依赖 node-pty 自带 N-API 预编译产物
+# （prebuilds/<平台>-<架构>），ABI 在 Node 与 Electron 之间是稳定的，它的加载器在
+# build/Release 缺失时本来就回落到那里 —— 开发期跑的一直是这一份。打开重建反而要求
+# 本机装齐 MSVC 与 Spectre 缓解库，为一件不必做的事引入一整条工具链依赖。
+npmRebuild: false
+
+# 运行时闭包由 afterPack 钩子放入 resources/runtime。
+#
+# 不走 extraResources：它对 node_modules 有自己的排除规则，闭包会被拷成一个只有
+# lib/ 的空壳，而且构建阶段完全不报错 —— 详见 tools/after-pack.js。
+afterPack: ./tools/after-pack.js
+
+# 只有替身包需要解包：它要被 cpSync 递归复制进 profile，而 asar 对递归复制不透明。
 asarUnpack:
-  - node_modules/@deepseek-ai/**
+  - host/plugins/**
 
 win:
   target:

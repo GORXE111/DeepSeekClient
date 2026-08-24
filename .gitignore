@@ -1,16 +1,12 @@
 node_modules/
+
+# 构建产物。两者都由 `npm run build` 从源码重新产出，不入库：
+#  · runtime/ 是 harness 闭包（约 250MB）
+#  · dist/    是安装包
+runtime/
 dist/
 out/
+
 *.log
 .DS_Store
 Thumbs.db
-
-# 探针是一次性诊断脚本，结论已固化在 docs/architecture-findings.md
-probe/
-probe2/
-probe3/
-probe4/
-probe5/
-probe6/
-probe7/
-probe8/

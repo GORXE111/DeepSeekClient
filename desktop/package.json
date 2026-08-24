@@ -1,0 +1,38 @@
+{
+  "name": "deepseek-client",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness 桌面客户端：装上就能用，只需配置 API 或本地模型。",
+  "license": "MIT",
+  "author": "linyang",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GORXE111/DeepSeekClient.git"
+  },
+  "main": "main.js",
+  "bin": {
+    "deepseek-client": "bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "host",
+    "renderer",
+    "build/icon.png",
+    "main.js",
+    "preload.js",
+    "desktop.patch.yml"
+  ],
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "icon": "electron tools/render-icon.js"
+  },
+  "devDependencies": {
+    "electron": "43.4.1",
+    "electron-builder": "^26.15.3"
+  }
+}
