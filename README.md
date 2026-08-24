@@ -1,87 +1,109 @@
-# DeepSeekClient
+# DeepSeek Client
 
-把 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 Web UI 收进一个原生桌面窗口 —— 没有浏览器标签页，没有要记的端口号。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的桌面客户端。前后端在一个包里，装完就能用 —— 你只需要配一个 API key，或者指向自己机器上的本地模型。
 
-目标是一个像 ChatGPT 桌面版那样的本地客户端：本地渲染、本地执行，模型可以接 DeepSeek 官方 API、任意 OpenAI 兼容网关，或者跑在自己机器上的 Ollama / vLLM / LM Studio。
+没有浏览器标签页，没有要记的端口号，**运行时不监听任何网络端口**。
 
-> 状态：可用的早期版本。窗口、生命周期、进程管理都已就绪；彻底去掉本地端口的工作在进行中（见下方路线）。
-
-## 运行
-
-需要：
-
-- **Node 22.19+ 或 24+** —— harness 的入口用到 `import.meta.main`，更旧的版本上它是 `undefined`，脚本会静默不执行且退出码为 0
-- 一份构建好的 harness 仓库（`pnpm install && pnpm run build`）
+## 安装
 
 ```sh
+npm install -g deepseek-client
+deepseek-client
+```
+
+国内网络下 Electron 的二进制可能下不动，先设个镜像：
+
+```sh
+npm config set ELECTRON_MIRROR https://npmmirror.com/mirrors/electron/
+npm install -g deepseek-client
+```
+
+需要 Node 22.19 以上。
+
+## 配置模型
+
+首次启动后打开 **设置 → 模型**。
+
+**DeepSeek 官方 API** —— 在 DeepSeek 卡片里填入 API key，保存即可。密钥是只写的：保存后界面只拿得到脱敏描述符，明文存在 `~/.dsh/.credentials.yaml`，设置里只留一个引用。
+
+**本地模型**（Ollama / vLLM / LM Studio）—— 选**添加自定义提供方**，填：
+
+| 字段 | 例（Ollama） |
+|---|---|
+| Provider ID | `ollama` |
+| API 协议 | `openai-completions` |
+| 基础 URL | `http://127.0.0.1:11434/v1` |
+| 模型 | 你本地拉过的那些 |
+
+「获取可用模型」会打 `GET /models`，Ollama 与 vLLM 都支持，能直接把本地模型列出来。
+
+本地服务通常还需要两个兼容开关，表单里没有，要写进 `~/.dsh/settings.yaml`：
+
+```yaml
+llm-pi-ai:
+  providers:
+    ollama:
+      api: openai-completions
+      baseURL: http://127.0.0.1:11434/v1
+      compat:
+        supportsDeveloperRole: false   # 多数本地服务不认 role: developer
+        maxTokensField: max_tokens     # 只认 max_tokens，不认 max_completion_tokens
+      models:
+        - id: qwen3-coder:30b
+```
+
+无需认证的本地服务**不要写 `apiKeyEnv`** —— 写了却解析不出值会直接以 `MISSING_CREDENTIAL` 失败，整行删掉才表示"这条路由不认证"。
+
+## 界面
+
+- **强调色** —— 菜单里六档可选，切换即时生效
+- **中英文** —— 菜单和设置里都能切，两个入口共用一份状态
+- **深浅色** —— 设置 → 外观，可跟随系统
+
+## 它是怎么搭起来的
+
+```
+渲染进程 (dsh://app)
+  ├─ 页面 / assets / plugins / api ──protocol.handle──┐
+  └─ 两条下行流 ──preload IPC──► 主进程 ─────────────┤
+                                                     └─► 命名管道 ─► utilityProcess(harness)
+```
+
+三处不显然的决定：
+
+- **harness 跑在 utilityProcess，不是主进程。** Cordis 的 loader 需要 Node 内部的 ESM 加载器才能相对 baseUrl 解析插件，而 Electron 的 V8 嵌入不暴露它所需的符号。utilityProcess 跑的是真实 Node 且接受 `execArgv`，带 `--expose-internals` 即可。附带好处是 harness 崩溃与界面天然隔离。
+- **载体是命名管道，不是 TCP 端口。** 目标是"没有网络端口"，不是"不用 http"。管道让 `req`/`res` 保持为货真价实的 node 对象，上游的 bridge 因此拿到它期待的一切；而管道没有端口号，远程不可达。
+- **不 fork 上游。** 上游的 `/api` 路由、信任栅栏与特权方法表都长在 `client-connection` 里，而它 inject 了 `webServer`。这里换掉它依赖的那个服务而不是改它，于是上游此后对这些策略的任何修改都自动继承 —— 没有一行安全逻辑被复制。
+
+完整的探查记录在 [docs/architecture-findings.md](docs/architecture-findings.md)，十二条实测结论，每条都反直觉。
+
+## 从源码运行
+
+```sh
+git clone https://github.com/GORXE111/DeepSeekClient.git
+cd DeepSeekClient
 npm install
 npm start
 ```
 
-默认从 `E:\DEEPSEEK\deepseek-harness` 找 harness、用 `E:\DEEPSEEK\node24\node.exe` 跑它。换成你自己的路径：
+对着 harness 源码仓库开发时，用 `DSH_DESKTOP_REPO` 指过去即可。
+
+## 打包
 
 ```sh
-set DSH_DESKTOP_REPO=D:\code\deepseek-harness
-set DSH_DESKTOP_NODE=C:\Program Files\nodejs\node.exe
-npm start
+npm run build:win     # NSIS 安装包
+npm run build:mac     # dmg（必须在 macOS 上执行）
+npm run build:linux   # AppImage
 ```
 
-## 它是怎么工作的
+产物**未签名**：macOS 首次打开会被 Gatekeeper 拦（右键→打开可绕过），Windows 会弹 SmartScreen。去掉这些警告需要真实的开发者证书，不是配置能解决的。
 
-主进程把 harness 的 web profile 作为子进程拉起，让它绑到一个由内核挑选的空闲端口，再把窗口指向那个地址。
+## 已知事项
 
-几个不是随手写的决定：
-
-- **端口不写死。** `--port 0` 让内核挑，再从 harness 打印的那行 URL 解析回来。写死意味着第二个实例撞端口，也会和手动跑的 `dsh web` 冲突。
-- **显式使用外部 Node，而不是 Electron 自带的那个。** Electron 内置的 Node 版本不保证 ≥22.19，一旦低于就会撞上上面那个静默失败，退出码还是 0，极难排查。顺带把 harness 的崩溃和壳隔离开。
-- **退出用 `taskkill /T`。** Windows 上 `child.kill()` 只结束被 spawn 的那一个进程，它底下的进程会变成孤儿并继续占着端口。
-- **单实例锁。** 两个壳会各拉起一份 harness，抢同一个 `DSH_HOME`。
-- **窗口不是浏览器。** 外部链接交给系统浏览器，站内导航不许离开 harness 自己的 origin；渲染进程 `nodeIntegration: false` + `contextIsolation: true` + `sandbox: true`。
-
-## IPC 载体
-
-渲染进程通过 `preload.js` 暴露的一个窄接口和宿主说话，拿不到 `ipcRenderer` 本身。这不是洁癖 —— 它是彻底去掉 HTTP 那条路的前置条件。
-
-harness 的 `/api` 有一道信任栅栏（DNS rebinding 与跨站防御）。它拒绝字面量为 `null` 的 `Origin`，而 `file://` 页面发出的请求携带的正是这个。**所以渲染进程直接 fetch 本地 API 是走不通的，IPC 是唯一的路。**
-
-仓库里带了一个验证页，把这件事做成了可运行的实验而不是一句断言：
-
-```sh
-set DSH_DESKTOP_SPIKE=1
-npx electron .
-```
-
-| | 实验 | 预期 | 实测 |
-|---|---|---|---|
-| A | `file://` 页面直接 fetch `/api` | 被拒 | HTTP 403 |
-| B | 经 IPC 调 `host.describe` | 成功 | HTTP 200 |
-| C | 经 IPC 调 `settings.describe`（特权方法） | 成功 | HTTP 200 |
-
-实验 C 是关键。harness 把 `settings.*`、`credentials.*`、`host.openPath` 等特权方法**用一次空信任表的检查钉在回环上**，而那道检查读的是 HTTP 请求头。IPC 没有请求头，天然"绕过"。正确做法不是绕过，而是让它照常成立 —— 主进程合成请求时显式带回环 `Host`、不带 `Origin` 与 `Sec-Fetch-*`，于是特权方法的策略**原样生效**。
-
-这个区别很要命：绕过的话那张特权方法表就成了摆设，而且是静默失效。
-
-## 路线
-
-当前版本的 IPC 桥内部仍然转发到子进程的 HTTP 端点 —— 渲染进程确实再也不碰网络（实验 A 证明它想碰也碰不到），但端口还在。
-
-要让端口真正消失：
-
-1. **把 harness 收进主进程**，`ipcMain.handle` 直接调 `toFetchHandler(ctx.apiProxy).fetch(request)`。渲染侧接口一个字都不用改 —— 载体可替换、协议不受影响，正是上面那个验证要证明的事。
-2. **拆 harness 的 `client-connection` 插件。** 它 `inject = ['webServer']` 硬依赖 web 服务器，而 `/api` 路由、WebSocket upgrade 与特权方法表全长在同一个 apply 里。这是唯一需要改上游代码的地方。
-3. **两条下行流。** 覆盖 `AbstractApiClient` 的 `openMux` / `openHost`，照搬 `WebApiClient.readWebSocket` 的形状（inbox + wake + abort 清理），把 WebSocket 换成 IPC push 通道。
-4. **前端 dist 走 `file://`**，并把 `ElectronApiClient` 注入进去。
-
-未验证的风险：Electron 内置 Node 能否满足 harness 的版本要求，以及 tsx/ESM 在 Electron 主进程里能否正常加载。如果不行，第 1 步就要换形态（例如主进程与 harness 之间走 stdio RPC）。
-
-## 已知粗糙处
-
-- 路径默认值是作者机器上的绝对路径，靠环境变量覆盖。应该改成相对解析或首次运行时引导。
-- 尚未打包成可分发的安装程序；目前从源码运行。
-- 只在 Windows 上验证过。
+- 上游处于 developer preview 且明说会有破坏性变更。运行时版本在 `package.json` 里**钉死精确值**而不是跟 dist-tag —— 上游的 `latest` 标签目前停在一个旧纪元，按它装会得到版本错配的树。
+- 中文输入法在输入过程中看不见正在组的字，这是上游的缺陷，已提交给上游（[Discussion #3607](https://github.com/deepseek-ai/deepseek-harness/discussions/3607)），合并前本客户端会带着它。
+- 命名管道的默认 ACL 允许本机其他进程连接，与回环 TCP 端口同级。收紧需要每次启动生成共享密钥头，属于后续工作。
 
 ## 许可
 
-MIT
-
-上游 DeepSeek Harness 亦为 MIT，版权归 DeepSeek AI。本项目不包含其代码，只在运行时启动它。
+MIT。上游 DeepSeek Harness 亦为 MIT，版权归 DeepSeek AI；本项目在运行时启动它，并未包含其源码。

@@ -25,19 +25,19 @@ const DESKTOP = __dirname
 /**
  * harness 运行时的位置。
  *
- * 打包后用随包分发的闭包（resources/runtime）——那份是从 registry 装的、
- * 依赖自洽的树，版本在 runtime/package.json 里钉死。开发时回落到源码仓库，
- * 因为那里才有我们自己构建的产物。
+ * 它是这个包的普通依赖，所以按包名解析就够了 —— npm 装完是一棵扁平可解析的
+ * 树，打成安装包时由 asarUnpack 把它留在 asar 之外（Node 要按真实路径解析它）。
+ * 两种分发方式因此共用同一条代码路径，不必各写一套。
  *
- * 闭包必须留在 asar 之外：Node 要按真实路径解析它，打进 asar 就找不到了。
- * 这也是它走 extraResources 而不是 files 的原因。
+ * DSH_DESKTOP_REPO 仍然优先，那是对着源码仓库开发时用的。
  */
 function resolveRuntimeRoot() {
   if (process.env.DSH_DESKTOP_REPO !== undefined) return process.env.DSH_DESKTOP_REPO
-  if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'runtime', 'node_modules', '@deepseek-ai', 'dsh')
+  try {
+    return path.dirname(require.resolve('@deepseek-ai/dsh/package.json'))
+  } catch (err) {
+    throw new Error(`找不到 harness 运行时（@deepseek-ai/dsh）：${String(err && err.message ? err.message : err)}`)
   }
-  return 'E:\\DEEPSEEK\\deepseek-harness'
 }
 
 const REPO = resolveRuntimeRoot()

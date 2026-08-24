@@ -2,9 +2,9 @@
 #
 # 三件事值得先说清楚：
 #
-# 1. runtime/ 走 extraResources 而不是 files。它是一份 node_modules 闭包，要在
-#    运行时被 Node 解析 —— 打进 asar 里 `createRequire` 就找不到真实路径了。
-#    放进 resources/ 保持为普通目录，代价是安装包体积上没有压缩收益。
+# 1. harness 运行时是普通依赖，但必须用 asarUnpack 留在 asar 之外 —— Node 要按
+#    真实路径解析它，打进 asar 里 createRequire 就找不到。这样 npm 安装与安装包
+#    两种分发共用同一条解析路径，不必在代码里分叉。
 #
 # 2. 不配签名。这台机器上没有 Apple Developer 证书（security find-identity
 #    报 0 valid identities），Windows 也没有代码签名证书。未签名的包能跑，但
@@ -34,18 +34,12 @@ files:
   - package.json
   - '!**/node_modules/.bin'
   - '!probe*/**'
-  - '!runtime/**'
   - '!docs/**'
+  - '!tools/**'
 
-extraResources:
-  - from: runtime
-    to: runtime
-    filter:
-      - '**/*'
-      - '!**/*.map'
-      - '!**/README*'
-      - '!**/CHANGELOG*'
-      - '!**/.bin/**'
+# harness 的包必须解包：Cordis 的 loader 按真实文件路径解析插件。
+asarUnpack:
+  - node_modules/@deepseek-ai/**
 
 win:
   target:
