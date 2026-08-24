@@ -4,21 +4,47 @@
 
 没有浏览器标签页，没有要记的端口号，**运行时不监听任何网络端口**。
 
-## 安装
+## 仓库布局
 
-```sh
-npm install -g deepseek-client
-deepseek-client
+前端、后端与桌面壳全在这一个仓库里，界面上跑的就是这里的源码。
+
+```
+harness/     DeepSeek Harness 源码（前端 + 后端），含本仓库的改动
+desktop/     Electron 壳：窗口、托盘、通知、悬浮宠物
+tools/       构建脚本
+runtime/     产物：harness 运行时闭包（不入库）
+dist/        产物：安装包（不入库）
 ```
 
-国内网络下 Electron 的二进制可能下不动，先设个镜像：
+`harness/` 取自官方 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)
+的 `dsh-v0.1.1-rc.2`（MIT），在其上带三处本仓库的改动：外观设置、中文输入法预编辑
+修复、以及 Windows 上的 lefthook 安装修复。
+
+## 从源码构建
+
+需要 Node 24 以上（`pnpm` 由 `npx` 拉起，不必预装）。
 
 ```sh
-npm config set ELECTRON_MIRROR https://npmmirror.com/mirrors/electron/
-npm install -g deepseek-client
+npm run setup     # 装 harness 与 desktop 的依赖
+npm run build     # 构建 harness → 产出运行时闭包 → 打出安装包
 ```
 
-需要 Node 22.19 以上。
+安装包落在 `dist/`。想直接跑而不打包：
+
+```sh
+npm run build:harness
+npm run build:runtime
+npm start
+```
+
+`runtime/` 是安装包里真正被执行的那份 harness：一棵扁平、无符号链接的
+node_modules。这两个性质不是偏好 —— Cordis 的 loader 按真实文件路径解析插件，
+链接一旦是绝对路径，闭包拷进安装包就全断了。`tools/build-runtime.js` 会在产出后
+自检并把缺的包补齐。
+
+平台目标：`npm run build:win` / `build:mac` / `build:linux`。macOS 的包只能在
+macOS 上构建，且本仓库不配代码签名 —— 未签名的包能跑，但首次打开会被 Gatekeeper
+或 SmartScreen 拦一次。
 
 ## 配置模型
 
