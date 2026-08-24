@@ -99,13 +99,39 @@ async function main() {
     })
   })
 
+  // 两条下行流（events.mux / events.host）是 WebSocket upgrade，不是普通请求。
+  // 上游把它们注册成 upgrade 路由，替身照单收下；这里只负责按 pathname 转交，
+  // 协议握手与连接内容仍归上游的 handler 所有 —— 与它在真实 web 服务器上时
+  // 拿到的东西逐字节一致，因为管道上的 socket 也是真的。
+  server.on('upgrade', (req, socket, head) => {
+    let route
+    try {
+      route = stub.upgradeFor(new URL(req.url ?? '/', 'http://x').pathname)
+    } catch {
+      socket.destroy()
+      return
+    }
+    if (route === undefined) { socket.destroy(); return }
+    // 与上游 webserver 同样的姿态：socket 上的错误只记日志并销毁，绝不让一条
+    // 坏连接掀翻整个进程。
+    socket.on('error', (err) => { say('error', `upgrade socket: ${String(err.message)}`) })
+    Promise.resolve(route.handler(req, socket, head)).catch((err) => {
+      say('error', `upgrade 处理失败: ${String(err && err.message ? err.message : err)}`)
+      socket.destroy()
+    })
+  })
+
   const pipe = pipePath()
   await new Promise((resolve, reject) => {
     server.once('error', reject)
     server.listen(pipe, resolve)
   })
 
-  say('ready', { pipe })
+  say('ready', {
+    pipe,
+    routes: stub.routes.map((r) => `${r.kind}:${r.path}`),
+    upgrades: [...stub.upgrades.keys()],
+  })
 
   process.parentPort.on('message', (e) => {
     if (e?.data === 'shutdown') { server.close(); process.exit(0) }

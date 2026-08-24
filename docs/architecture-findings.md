@@ -130,6 +130,25 @@ fallback = 已注册
 
 安全姿态与原方案持平：命名管道的默认 ACL 允许本机其他进程连接，正如原来的回环 TCP 端口，而上游那道信任栅栏两种载体都照常生效。要更严需要每次启动生成共享密钥头 —— 属于后续工作，记在下面。
 
+## 11. 两条下行流在管道上同样成立
+
+`events.mux` / `events.host` 是 WebSocket upgrade 而不是普通请求。上游把它们注册成 upgrade 路由，替身照单收下，管道 server 按 pathname 转交 —— 协议握手与连接内容仍归上游的 handler，因为管道上的 socket 也是真的。
+
+实测（`probe8`，手工完成 WebSocket 握手，因为标准客户端只认 URL、连不上管道）：
+
+```
+upgrade      /api/events.mux | /api/events.host
+events.host  ✔ 握手成功（101 + Sec-WebSocket-Accept 校验通过） · 收到 4 帧
+             {"type":"server-request", … "method":"host/remote-event" …}
+events.mux   ✔ 握手成功 · 收到 8 帧
+             {"type":"server-request", … "method":"session/subscribed" …}
+             {"type":"server-request", … "method":"session/projection" …}
+```
+
+触发源用的是 `session.create`（推一条 `host/session-added`，不调用 LLM）。**握手通过不足以说明载体可用，帧真的流起来才算。**
+
+至此整个载体在管道上完整可用：unary + 两条下行流，全程零 TCP 端口。
+
 ## 历史：伪造 req/res 那条弯路
 
 把上游捕获到的 `route.handler(req, res)` 用伪造的 node 对象喂进去，会停在一个精确的位置：
@@ -152,5 +171,4 @@ fallback = 已注册
 
 - **载体加共享密钥**：管道默认 ACL 允许本机其他进程连接，与原来的回环端口同级。每次启动生成一个随机头、由 harness 侧校验，可以把本机其他进程挡在外面。
 - **门面块解析改为打包期固化**：见第 8 条。
-- **两条下行流**：`events.mux` 与 `events.host` 还没走通管道。upgrade 路由已被替身捕获（`stub.upgradeFor`），需要把 WebSocket 握手也接过去。
 - **渲染侧**：`ElectronApiClient extends AbstractApiClient`，`doFetch` 走 IPC；`openMux` / `openHost` 照搬 `WebApiClient.readWebSocket` 的形状（inbox + wake + abort 清理），把 WebSocket 换成 IPC push 通道。
