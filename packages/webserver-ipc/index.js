@@ -29,15 +29,6 @@ import { Service } from '@deepseek-ai/cordis'
  */
 const HANDLE = Symbol.for('dsh-desktop.webserver-ipc.handle')
 
-/**
- * 开发期信标。utilityProcess 的 stdio 不转发，console 在这里等于哑掉；
- * parentPort 是同一进程里唯一能传出去的通道。宿主不在 utilityProcess 里时静默。
- */
-function beacon(what) {
-  try { process.parentPort?.postMessage(`__BEACON__ [stub] ${what}`) } catch { /* 非 utility 进程 */ }
-}
-beacon('模块已求值')
-
 /** @returns 当前已挂载的替身；未挂载时抛错而不是返回空，避免调用方拿着 undefined 走很远。 */
 export function webServerIpc() {
   const handle = globalThis[HANDLE]
@@ -72,7 +63,6 @@ export class WebServerIpc extends Service {
 
   constructor(ctx) {
     super(ctx, 'webServer')
-    beacon('构造函数已执行')
     if (globalThis[HANDLE] !== undefined) {
       // 第二次挂载会让宿主握到一个不再被写入的路由表，而且这种错只在请求发不出去
       // 时才浮现。宁可在挂载处炸掉。
@@ -142,7 +132,6 @@ export class WebServerIpc extends Service {
    * 已 resolve 的 promise，而不是同步 undefined。
    */
   async [Service.init]() {
-    beacon('init 已执行（无 socket）')
   }
 }
 

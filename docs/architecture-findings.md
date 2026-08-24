@@ -62,18 +62,13 @@ utilityProcess.fork(child, [], { execArgv: ['--expose-internals'] })
 
 `client-connection` 声明 `inject = ['webServer']`，而 `/api` 路由、WebSocket upgrade 与 `PRIVILEGED_METHODS` 表全长在它的 apply 里。
 
-不需要 fork 它 —— 换掉它依赖的 `webServer` 服务即可。上游插件原样加载，把真正的路由注册进替身，桌面端从 IPC 收到请求后合成 node 的 req/res 喂给同一个处理器。
+不需要 fork 它 —— 换掉它依赖的 `webServer` 服务即可。上游插件原样加载，把真正的路由注册进替身，桌面端再把请求喂给同一个处理器。
 
 上游此后新增或收紧任何策略，桌面端自动继承。**没有一行安全逻辑被复制** —— 这对一个要长期跟随 rc 阶段上游、且上游不收 PR 的产品是决定性的。
 
-替身要伪造的 node 接口面很窄（上游 `http-bridge` 只触碰这些）：
+替身本身刻意保持"哑"：只做登记与路径匹配（精确 → 最长前缀 → fallback，与上游同序），不判断谁能调什么。那是上游路由处理器的职责，把它留在原处正是本设计的全部意义。
 
-```
-req: method, url, headers, destroy
-res: writeHead, write, end, on/once/off, writableEnded
-```
-
-都是 node http 里最稳定的成员，不随上游演进腐坏。
+请求怎么送到那个处理器，见第 10 条 —— 一度试过伪造 node 对象，行不通。
 
 ## 6. 信任栅栏拒绝 `Origin: null`
 
@@ -114,7 +109,28 @@ fallback = 已注册
 
 所以引导健康、apiProxy 健全、共享处理器工作正常。
 
-## 未决：伪造的 req/res 驱动上游路由处理器时挂住
+## 10. 载体用命名管道，不要伪造 node 对象
+
+伪造 `IncomingMessage`/`ServerResponse` 喂给上游路由处理器**行不通**：请求体读完之后、响应产生之前挂住，而同一次引导里直连 `apiProxy` 和共享处理器都返回 200。用真实的 http server 打同一个 handler 则立刻 200，逐字段 diff 显示伪造的 `req` 缺 `socket`、`aborted`、`complete`、`httpVersion`、`rawHeaders`、`connection`、`trailers`。
+
+补字段是条没有尽头的路：缺什么取决于上游此刻读了什么，而那会变。
+
+**改用真实的 node http server，监听命名管道而不是 TCP 端口。** `req`/`res` 因此是货真价实的对象，上游拿到它期待的一切，我们零维护、永不漂移；而管道没有端口号，远程不可达 ——「无端口」的目标依然成立，代价只是一次本地管道往返。
+
+实测（`host/harness-host.js` + `probe7`）：
+
+```
+引导完成，耗时 1003ms
+管道 \\.\pipe\dsh-desktop-45008-d850eaed
+  host.describe        HTTP 200 · ok
+  settings.describe    HTTP 200 · ok     ← 特权方法照常放行
+  llm.providers        HTTP 200 · ok
+全程无 TCP 端口
+```
+
+安全姿态与原方案持平：命名管道的默认 ACL 允许本机其他进程连接，正如原来的回环 TCP 端口，而上游那道信任栅栏两种载体都照常生效。要更严需要每次启动生成共享密钥头 —— 属于后续工作，记在下面。
+
+## 历史：伪造 req/res 那条弯路
 
 把上游捕获到的 `route.handler(req, res)` 用伪造的 node 对象喂进去，会停在一个精确的位置：
 
@@ -130,4 +146,11 @@ fallback = 已注册
 - **不是 Request 的形状**：把 `bridge` 与手写版的三处差异（`dsh.internal` 基址、`content-length` 头、`signal`）逐个加回去做了四个变体，**全部返回 200**
 - **不是引导状态**：上面两条对照在同一次引导里都是 200
 
-下一步建议不要再从外部试探，改为对比法：用**真实的 node http 请求**打同一个捕获到的 handler（临时起一个本地 server 把 req/res 转过去），与伪造对象逐字段 diff。嫌疑最大的是伪造的 `req` 只是个 `Readable`，缺少 `IncomingMessage` 的某些成员（如 `socket`、`aborted`、`complete`），而 `bridge` 之外的某一层读到了它们。
+对比法给出了答案：真实 req/res 打同一个 handler 立刻 200，伪造的不行。结论见上一节 —— 不补字段，改用命名管道。
+
+## 待办
+
+- **载体加共享密钥**：管道默认 ACL 允许本机其他进程连接，与原来的回环端口同级。每次启动生成一个随机头、由 harness 侧校验，可以把本机其他进程挡在外面。
+- **门面块解析改为打包期固化**：见第 8 条。
+- **两条下行流**：`events.mux` 与 `events.host` 还没走通管道。upgrade 路由已被替身捕获（`stub.upgradeFor`），需要把 WebSocket 握手也接过去。
+- **渲染侧**：`ElectronApiClient extends AbstractApiClient`，`doFetch` 走 IPC；`openMux` / `openHost` 照搬 `WebApiClient.readWebSocket` 的形状（inbox + wake + abort 清理），把 WebSocket 换成 IPC push 通道。
