@@ -175,15 +175,17 @@ export function buildOverrides(paletteId: string, accent: string): ThemeTokenOve
 /**
  * Build the conversation backdrop stylesheet.
  *
- * Anchored on `[data-conversation-root]` — the element that holds the header,
- * the transcript, and the composer, and that does not itself scroll. The
+ * Anchored on `[data-conversation-backdrop]` — the box holding the transcript
+ * and the composer, which excludes the header and does not itself scroll. The
  * obvious target is the scrollport, but an absolutely positioned layer inside a
  * scrolling box **scrolls away with the content**: the backdrop then covers the
  * first screenful and leaves everything below it, the composer included, bare.
+ * Anchoring one level up instead would run the backdrop under the title row.
  *
- * Painted by a pseudo-element rather than as the element's own `background`,
- * because that slot already carries the opaque page ground. The layer must also
- * stay out of hit-testing, or message text stops being selectable.
+ * Painted by a pseudo-element rather than as the element's own `background` so
+ * the strength slider can drive `opacity` on the layer alone — set on the
+ * element it would fade the transcript with it. The layer must also stay out of
+ * hit-testing, or message text stops being selectable.
  *
  * Presets carry one gradient per palette mode: a backdrop sits under body text,
  * so it has to be darker than a light ground and lighter than a dark one. A
@@ -203,8 +205,8 @@ export function buildBackdropCss(selection: string, opacity: number): string {
   const strength = Math.min(CHAT_OPACITY_MAX, Math.max(CHAT_OPACITY_MIN, opacity))
 
   return [
-    '[data-conversation-root] { position: relative; }',
-    '[data-conversation-root]::before {',
+    '[data-conversation-backdrop] { position: relative; }',
+    '[data-conversation-backdrop]::before {',
     "  content: '';",
     '  position: absolute;',
     '  inset: 0;',
@@ -213,9 +215,9 @@ export function buildBackdropCss(selection: string, opacity: number): string {
     `  opacity: ${strength};`,
     `  background: ${light};`,
     '}',
-    `body[data-ds-dark-theme] [data-conversation-root]::before { background: ${dark}; }`,
+    `body[data-ds-dark-theme] [data-conversation-backdrop]::before { background: ${dark}; }`,
     // 内容要压在背景之上，否则会被伪元素盖住。
-    '[data-conversation-root] > * { position: relative; z-index: 1; }',
+    '[data-conversation-backdrop] > * { position: relative; z-index: 1; }',
 
     // 输入框座自带一层"输入遮罩"：从透明淡入到**纯底色**，用来把滚到它下面的
     // 消息挡住。那段纯色会把壁纸一起盖掉，于是输入框那一带出现一条突兀的色带。
@@ -223,6 +225,6 @@ export function buildBackdropCss(selection: string, opacity: number): string {
     // 选了背景就把遮罩整个透明掉，让壁纸连成一片。代价是滚动时消息会从输入卡片
     // 四周的空隙里淡淡透出来 —— 这是明知的取舍：背景本就是装饰，断成两截比透出
     // 一点更难看。没选背景时这条规则不生成，上游的遮罩原样保留。
-    '[data-conversation-root] [data-composer-seat] { background: transparent !important; }',
+    '[data-conversation-backdrop] [data-composer-seat] { background: transparent !important; }',
   ].join('\n')
 }

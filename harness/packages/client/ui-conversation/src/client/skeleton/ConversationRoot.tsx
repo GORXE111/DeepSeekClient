@@ -183,16 +183,19 @@ export function ConversationRoot({
     </div>
   )
 
-  // `data-conversation-root` marks the element that spans the header, the
-  // transcript, and the composer without scrolling itself. A decorative layer
-  // anchored on the scrollport instead scrolls away with the content, leaving
-  // everything past the first screenful uncovered.
+  // `data-conversation-backdrop` marks where a decorative backdrop belongs: the
+  // box holding the transcript and the composer, and nothing else. It excludes
+  // the header, so a backdrop never runs under the title row or its tabs, and
+  // it does not scroll — a layer anchored on the scrollport instead slides away
+  // with the content, leaving everything past the first screenful uncovered.
   return (
-    <div className={css.root} data-phase={phase} data-conversation-root="">
+    <div className={css.root} data-phase={phase}>
       {renderSlot('conversation.session.header', {})}
-      <div className={css.scrollBody} data-conversation-scroll="">
-        {renderSlot('conversation.session', {})}
-        {composerSeat}
+      <div className={css.bodyArea} data-conversation-backdrop="">
+        <div className={css.scrollBody} data-conversation-scroll="">
+          {renderSlot('conversation.session', {})}
+          {composerSeat}
+        </div>
       </div>
     </div>
   )
