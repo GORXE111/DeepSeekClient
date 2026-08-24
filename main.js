@@ -18,9 +18,27 @@ const fs = require('node:fs')
 const { proxy, unary, openStream } = require('./host/pipe-bridge.js')
 const { installMenu } = require('./host/menu.js')
 
-/** harness 仓库根目录；DSH_DESKTOP_REPO 覆盖。 */
-const REPO = process.env.DSH_DESKTOP_REPO ?? 'E:\\DEEPSEEK\\deepseek-harness'
 const DESKTOP = __dirname
+
+/**
+ * harness 运行时的位置。
+ *
+ * 打包后用随包分发的闭包（resources/runtime）——那份是从 registry 装的、
+ * 依赖自洽的树，版本在 runtime/package.json 里钉死。开发时回落到源码仓库，
+ * 因为那里才有我们自己构建的产物。
+ *
+ * 闭包必须留在 asar 之外：Node 要按真实路径解析它，打进 asar 就找不到了。
+ * 这也是它走 extraResources 而不是 files 的原因。
+ */
+function resolveRuntimeRoot() {
+  if (process.env.DSH_DESKTOP_REPO !== undefined) return process.env.DSH_DESKTOP_REPO
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'runtime', 'node_modules', '@deepseek-ai', 'dsh')
+  }
+  return 'E:\\DEEPSEEK\\deepseek-harness'
+}
+
+const REPO = resolveRuntimeRoot()
 
 /** harness 引导到报告管道地址的容忍时间。首次加载插件树较慢，给足。 */
 const BOOT_TIMEOUT_MS = 120_000

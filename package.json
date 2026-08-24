@@ -5,7 +5,12 @@
   "description": "DeepSeek Harness 桌面壳：把 web profile 收进一个原生窗口，用户看不到浏览器",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "install:runtime": "npm --prefix runtime install --omit=dev",
+    "prepare:runtime": "node scripts/prepare-runtime.js",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
   },
   "devDependencies": {
     "electron": "^43.4.1",

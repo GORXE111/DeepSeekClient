@@ -1,0 +1,80 @@
+# 打包配置。
+#
+# 三件事值得先说清楚：
+#
+# 1. runtime/ 走 extraResources 而不是 files。它是一份 node_modules 闭包，要在
+#    运行时被 Node 解析 —— 打进 asar 里 `createRequire` 就找不到真实路径了。
+#    放进 resources/ 保持为普通目录，代价是安装包体积上没有压缩收益。
+#
+# 2. 不配签名。这台机器上没有 Apple Developer 证书（security find-identity
+#    报 0 valid identities），Windows 也没有代码签名证书。未签名的包能跑，但
+#    macOS 首次打开会被 Gatekeeper 拦（右键→打开可绕过），Windows 会弹
+#    SmartScreen。要去掉这些警告需要真证书，不是配置能解决的。
+#
+# 3. mac 目标只能在 macOS 上构建。electron-builder 在 Windows 上产不出可用的
+#    .app/.dmg —— 那不是限制而是事实，别指望交叉构建。
+
+appId: com.linyang.deepseekclient
+productName: DeepSeek Client
+copyright: Copyright © 2026 linyang
+
+directories:
+  output: dist
+  buildResources: build
+
+# 壳自己的代码。runtime/ 与 probe*/ 刻意排除：前者走 extraResources，
+# 后者是一次性诊断脚本，不该进安装包。
+files:
+  - main.js
+  - preload.js
+  - desktop.patch.yml
+  - host/**/*
+  - renderer/**/*
+  - packages/**/*
+  - package.json
+  - '!**/node_modules/.bin'
+  - '!probe*/**'
+  - '!runtime/**'
+  - '!docs/**'
+
+extraResources:
+  - from: runtime
+    to: runtime
+    filter:
+      - '**/*'
+      - '!**/*.map'
+      - '!**/README*'
+      - '!**/CHANGELOG*'
+      - '!**/.bin/**'
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  # 图标缺席时 electron-builder 用自带的默认图标；产品发布前要换成自己的。
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+mac:
+  target:
+    - target: dmg
+      arch: [arm64]
+  category: public.app-category.developer-tools
+  # 未签名构建必须显式关掉这两项，否则 electron-builder 会尝试签名并失败。
+  identity: null
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+
+dmg:
+  title: ${productName}
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+  category: Development
