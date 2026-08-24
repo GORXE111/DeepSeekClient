@@ -220,7 +220,8 @@ function createWindow() {
     // 完成 —— 那正是要消灭的那段空白。先出启动画面，内容就绪后再换。
     show: true,
     backgroundColor: '#fbfbfc',
-    title: 'DeepSeek Harness',
+    title: 'DeepSeek Client',
+    icon: path.join(DESKTOP, 'build', 'icon.png'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -229,6 +230,9 @@ function createWindow() {
     },
   })
 
+  // 页面会把 document.title 写成自己的构建名（"DSH Local Build"）。那是上游
+  // 前端的品牌，不是这个产品的名字 —— 拦下它，标题栏由壳决定。
+  win.on('page-title-updated', (event) => { event.preventDefault() })
   win.on('closed', () => { win = null })
 
   // 这个窗口是应用，不是通用浏览器：外链交给系统浏览器，站内导航不得离开 dist。

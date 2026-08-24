@@ -3,10 +3,15 @@
 /**
  * 应用菜单与界面语言。
  *
- * Electron 不给菜单时，Windows 上是没有菜单栏、macOS 上是一份英文默认菜单
- * （"Electron / File / Edit …"），两边都不像一个正经产品。这里给出中英两份，
- * 并按平台摆放：macOS 的第一个菜单必须是应用名，且"关于/服务/隐藏/退出"要落在
- * 它下面 —— 那是系统约定，放错位置比没有菜单更显业余。
+ * 刻意只保留两样东西：语言切换，和一个编辑菜单。
+ *
+ * 编辑菜单不是可选项 —— macOS 的 Cmd+C/V/X/A 快捷键是从菜单项的 role 上取的，
+ * 删掉它复制粘贴就真的不工作，而不只是少了几个菜单项。重新加载、缩放、开发者
+ * 工具这些则是开发用的，产品里不该出现。
+ *
+ * 按平台摆放：macOS 的第一个菜单必须是应用名，关于/服务/隐藏/退出落在它下面
+ * —— 那是系统约定，放错比没有菜单更显业余；Windows 上没有应用菜单，语言与
+ * 退出就得另有去处。
  *
  * 语言选择存在 userData 下，与 harness 自己的设置分开：这是壳的偏好，不该混进
  * 用户的 harness 配置里。
@@ -14,7 +19,7 @@
  * @module menu
  */
 
-const { app, Menu, shell, dialog } = require('electron')
+const { app, Menu, dialog } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 
@@ -48,28 +53,20 @@ function currentLocale() {
 
 const STRINGS = {
   zh: {
-    file: '文件', edit: '编辑', view: '视图', window: '窗口', help: '帮助',
-    language: '界语言', chinese: '简体中文', english: 'English',
-    newSession: '新建会话', close: '关闭窗口', quit: '退出',
+    edit: '编辑',
     undo: '撤销', redo: '重做', cut: '剪切', copy: '复制', paste: '粘贴', selectAll: '全选',
-    reload: '重新加载', forceReload: '强制重新加载', devtools: '开发者工具',
-    resetZoom: '实际大小', zoomIn: '放大', zoomOut: '缩小', fullscreen: '全屏',
-    minimize: '最小化', zoom: '缩放', front: '前置全部窗口',
-    about: '关于 DeepSeek Harness', services: '服务', hide: '隐藏', hideOthers: '隐藏其他', unhide: '全部显示',
-    upstream: '上游项目', findings: '架构说明',
+    language: '语言', chinese: '简体中文', english: 'English',
+    about: '关于 DeepSeek Client', services: '服务',
+    hide: '隐藏', hideOthers: '隐藏其他', unhide: '全部显示', quit: '退出',
     restartHint: '界面语言已切换，重启后生效。',
     restartTitle: '需要重启',
   },
   en: {
-    file: 'File', edit: 'Edit', view: 'View', window: 'Window', help: 'Help',
-    language: 'Language', chinese: '简体中文', english: 'English',
-    newSession: 'New Session', close: 'Close Window', quit: 'Quit',
+    edit: 'Edit',
     undo: 'Undo', redo: 'Redo', cut: 'Cut', copy: 'Copy', paste: 'Paste', selectAll: 'Select All',
-    reload: 'Reload', forceReload: 'Force Reload', devtools: 'Developer Tools',
-    resetZoom: 'Actual Size', zoomIn: 'Zoom In', zoomOut: 'Zoom Out', fullscreen: 'Toggle Full Screen',
-    minimize: 'Minimize', zoom: 'Zoom', front: 'Bring All to Front',
-    about: 'About DeepSeek Harness', services: 'Services', hide: 'Hide', hideOthers: 'Hide Others', unhide: 'Show All',
-    upstream: 'Upstream Project', findings: 'Architecture Notes',
+    language: 'Language', chinese: '简体中文', english: 'English',
+    about: 'About DeepSeek Client', services: 'Services',
+    hide: 'Hide', hideOthers: 'Hide Others', unhide: 'Show All', quit: 'Quit',
     restartHint: 'The interface language will change after a restart.',
     restartTitle: 'Restart Required',
   },
@@ -102,7 +99,7 @@ function installMenu(onRelaunchNeeded) {
   /** @type {Electron.MenuItemConstructorOptions[]} */
   const template = []
 
-  // macOS 的第一个菜单必须是应用名，系统会把"关于/服务/隐藏/退出"认到这里。
+  // macOS 的第一个菜单必须是应用名，系统会把关于/服务/隐藏/退出认到这里。
   if (mac) {
     template.push({
       label: app.name,
@@ -122,15 +119,8 @@ function installMenu(onRelaunchNeeded) {
     })
   }
 
-  template.push({
-    label: t.file,
-    submenu: [
-      // 非 macOS 上语言与退出落在文件菜单：那里是 Windows 用户找它们的地方。
-      ...mac ? [] : [{ label: t.language, submenu: languageSubmenu }, { type: 'separator' }],
-      mac ? { label: t.close, role: 'close' } : { label: t.quit, role: 'quit' },
-    ],
-  })
-
+  // 编辑菜单不能省。macOS 的 Cmd+C/V/X/A 快捷键是从菜单项的 role 上取的 ——
+  // 删掉这个菜单，复制粘贴就真的不工作了，而不只是少了几个菜单项。
   template.push({
     label: t.edit,
     submenu: [
@@ -144,44 +134,13 @@ function installMenu(onRelaunchNeeded) {
     ],
   })
 
-  template.push({
-    label: t.view,
-    submenu: [
-      { label: t.reload, role: 'reload' },
-      { label: t.forceReload, role: 'forceReload' },
-      { label: t.devtools, role: 'toggleDevTools' },
-      { type: 'separator' },
-      { label: t.resetZoom, role: 'resetZoom' },
-      { label: t.zoomIn, role: 'zoomIn' },
-      { label: t.zoomOut, role: 'zoomOut' },
-      { type: 'separator' },
-      { label: t.fullscreen, role: 'togglefullscreen' },
-    ],
-  })
-
-  template.push({
-    label: t.window,
-    submenu: [
-      { label: t.minimize, role: 'minimize' },
-      ...mac
-        ? [{ label: t.zoom, role: 'zoom' }, { type: 'separator' }, { label: t.front, role: 'front' }]
-        : [{ label: t.close, role: 'close' }],
-    ],
-  })
-
-  template.push({
-    label: t.help,
-    submenu: [
-      {
-        label: t.upstream,
-        click: () => { void shell.openExternal('https://github.com/deepseek-ai/deepseek-harness') },
-      },
-      {
-        label: t.findings,
-        click: () => { void shell.openExternal('https://github.com/GORXE111/DeepSeekClient/blob/main/docs/architecture-findings.md') },
-      },
-    ],
-  })
+  // 非 macOS 上没有应用菜单，语言与退出得有个去处。
+  if (!mac) {
+    template.push({
+      label: t.language,
+      submenu: [...languageSubmenu, { type: 'separator' }, { label: t.quit, role: 'quit' }],
+    })
+  }
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }

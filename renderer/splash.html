@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>DeepSeek Harness</title>
+<title>DeepSeek Client</title>
 <style>
   /* 启动画面。它存在的唯一理由是消灭"点了图标之后什么都没有"的那两三秒 ——
      harness 要引导插件树，这段时间省不掉，但可以不让它表现为一片空白。
@@ -26,13 +26,7 @@
     body { background: #101216; color: #e9ebef; }
   }
 
-  .mark {
-    width: 46px; height: 46px; border-radius: 13px;
-    background: linear-gradient(140deg, #4d6bfe, #7aa2ff);
-    display: grid; place-items: center;
-    color: #fff; font-size: 20px; font-weight: 600; letter-spacing: -0.02em;
-    box-shadow: 0 6px 20px rgba(77, 107, 254, 0.28);
-  }
+  .mark { width: 64px; height: 64px; display: block; }
 
   .name { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
 
@@ -48,8 +42,16 @@
 </style>
 </head>
 <body>
-  <div class="mark">D</div>
-  <div class="name">DeepSeek Harness</div>
+  <!-- 与应用图标同一枚标识：两枚交扣的环。启动画面和图标不该是两套视觉。 -->
+  <svg class="mark" viewBox="0 0 1024 1024" aria-hidden="true">
+    <mask id="cut">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <circle cx="512" cy="390.5" r="34" fill="#000"/>
+    </mask>
+    <circle cx="424" cy="512" r="150" fill="none" stroke="currentColor" stroke-width="34" stroke-opacity="0.42"/>
+    <circle cx="600" cy="512" r="150" fill="none" stroke="#5b7cff" stroke-width="44" mask="url(#cut)"/>
+  </svg>
+  <div class="name">DeepSeek Client</div>
   <div class="status" id="status">正在启动…</div>
 
 <script>

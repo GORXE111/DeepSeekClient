@@ -119,5 +119,34 @@
     },
   })
 
+
+  // ---------------------------------------------------------------- 品牌
+
+  /**
+   * 换掉侧边栏里的兜底品牌名。
+   *
+   * 上游有三个品牌插槽（sidebar.brand.mark / sidebar.brand.name /
+   * conversation.hero.brand.mark），"DSH Local Build" 只是没人填时的兜底 ——
+   * 那个 class 就叫 fallbackBrandName。正规做法是写一个客户端品牌插件把插槽填上，
+   * 但客户端插件要走 /plugins 打包管线，是另一摊工程。
+   *
+   * 在那之前用 CSS 顶掉：纯样式、不动 DOM，因此不会被 React 的重渲染擦掉，也
+   * 不会和上游的状态管理打架。class 名是 CSS Module 哈希过的，所以按包含匹配；
+   * 上游哪天改了名，效果是退回显示原文，而不是崩掉。
+   */
+  const style = document.createElement('style')
+  style.textContent = `
+    [class*="fallbackBrandName"] { font-size: 0 !important; }
+    [class*="fallbackBrandName"]::after {
+      content: "DeepSeek Client";
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+    /* 构建号是上游的版本标记，对这个产品的用户没有意义。 */
+    [class*="buildRevision"] { display: none !important; }
+  `
+  document.head.appendChild(style)
+
   console.info('[dsh-shim] 已安装：下行流改道 IPC')
 })()
