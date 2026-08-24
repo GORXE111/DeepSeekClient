@@ -175,12 +175,12 @@ export function buildOverrides(paletteId: string, accent: string): ThemeTokenOve
 /**
  * Build the conversation backdrop stylesheet.
  *
- * Anchored on `[data-conversation-backdrop]` — the box holding the transcript
- * and the composer, which excludes the header and does not itself scroll. The
- * obvious target is the scrollport, but an absolutely positioned layer inside a
- * scrolling box **scrolls away with the content**: the backdrop then covers the
- * first screenful and leaves everything below it, the composer included, bare.
- * Anchoring one level up instead would run the backdrop under the title row.
+ * Anchored on `[data-conversation-backdrop]` — the whole conversation column,
+ * which does not itself scroll. The obvious target is the scrollport, but an
+ * absolutely positioned layer inside a scrolling box **scrolls away with the
+ * content**: the backdrop then covers the first screenful and leaves everything
+ * below it, the composer included, bare. The header keeps its own separation by
+ * sitting over the layer as frosted glass, not by being excluded from it.
  *
  * Painted by a pseudo-element rather than as the element's own `background` so
  * the strength slider can drive `opacity` on the layer alone — set on the
@@ -226,5 +226,16 @@ export function buildBackdropCss(selection: string, opacity: number): string {
     // 四周的空隙里淡淡透出来 —— 这是明知的取舍：背景本就是装饰，断成两截比透出
     // 一点更难看。没选背景时这条规则不生成，上游的遮罩原样保留。
     '[data-conversation-backdrop] [data-composer-seat] { background: transparent !important; }',
+
+    // 标题行做成雾面玻璃：半透明底色 + 背景模糊。壁纸在它下面透上来但被打散，
+    // 于是这一条既和侧边栏拉开层次，又不会让标签直接压在渐变上而难读。
+    //
+    // 只在选了背景时才生成 —— 没有东西可透时，模糊什么也做不了，剩下的只是一层
+    // 平白的色差。
+    '[data-conversation-backdrop] [data-conversation-header] {',
+    '  background: color-mix(in srgb, var(--dsw-alias-bg-base) 58%, transparent);',
+    '  backdrop-filter: blur(20px) saturate(140%);',
+    '  -webkit-backdrop-filter: blur(20px) saturate(140%);',
+    '}',
   ].join('\n')
 }

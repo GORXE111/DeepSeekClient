@@ -227,17 +227,6 @@
   flex: none;
 }
 
-/* Non-scrolling box between the header and the scrollport. It exists to give a
-   decorative backdrop somewhere to live: on the scrollport it would slide away
-   with the content, and on the root it would run under the title row. */
-.bodyArea {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-height: 0;
-  position: relative;
-}
-
 .scrollBody {
   display: flex;
   flex: 1;

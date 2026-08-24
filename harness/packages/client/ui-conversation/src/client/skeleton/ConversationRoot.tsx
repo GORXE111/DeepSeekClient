@@ -184,18 +184,16 @@ export function ConversationRoot({
   )
 
   // `data-conversation-backdrop` marks where a decorative backdrop belongs: the
-  // box holding the transcript and the composer, and nothing else. It excludes
-  // the header, so a backdrop never runs under the title row or its tabs, and
-  // it does not scroll — a layer anchored on the scrollport instead slides away
-  // with the content, leaving everything past the first screenful uncovered.
+  // whole conversation column, which does not scroll. A layer anchored on the
+  // scrollport instead slides away with the content, leaving everything past the
+  // first screenful uncovered. The header sits over this layer as frosted glass
+  // rather than being excluded from it — see the backdrop stylesheet.
   return (
-    <div className={css.root} data-phase={phase}>
+    <div className={css.root} data-phase={phase} data-conversation-backdrop="">
       {renderSlot('conversation.session.header', {})}
-      <div className={css.bodyArea} data-conversation-backdrop="">
-        <div className={css.scrollBody} data-conversation-scroll="">
-          {renderSlot('conversation.session', {})}
-          {composerSeat}
-        </div>
+      <div className={css.scrollBody} data-conversation-scroll="">
+        {renderSlot('conversation.session', {})}
+        {composerSeat}
       </div>
     </div>
   )
