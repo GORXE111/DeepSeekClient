@@ -1,0 +1,17 @@
+# 桌面端补丁层：把 HTTP 载体换成不监听端口的替身。
+#
+# 只动"谁提供 webServer"这一件事。上游 client-connection 原样加载，它的 /api
+# 路由、WebSocket upgrade 与 PRIVILEGED_METHODS 照旧生效，桌面端因此自动继承
+# 上游此后对这些策略的任何修改 —— 没有 fork，也没有一行安全逻辑被复制。
+#
+# 注意：补丁不能覆盖一条 entry 的 `name`（试过，会被静默忽略，在位的仍是原插件）。
+# 因此必须禁用原 entry，再用 `insert` 插入替身。
+
+# 真正会 listen 的那个。
+- id: webserver
+  disabled: true
+
+# 接口一致、没有 socket 的替身。用 insert 插入，与被禁用的那条同处一层。
+- insert:
+    - id: webserver-ipc
+      name: '@dsh-desktop/webserver-ipc'

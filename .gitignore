@@ -4,3 +4,11 @@ out/
 *.log
 .DS_Store
 Thumbs.db
+
+# 探针是一次性诊断脚本，结论已固化在 docs/architecture-findings.md
+probe/
+probe2/
+probe3/
+probe4/
+probe5/
+probe6/
