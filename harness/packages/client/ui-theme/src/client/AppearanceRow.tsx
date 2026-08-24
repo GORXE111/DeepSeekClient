@@ -121,7 +121,7 @@ export function AppearanceRow({
 
       <div className={css.subTitle}>{t('chat.title')}</div>
       <div className={css.controlRow}>
-        {CHAT_PRESETS.map(({ id, labelKey, css: background }) => (
+        {CHAT_PRESETS.map(({ id, labelKey, light: background }) => (
           <button
             key={id}
             type="button"

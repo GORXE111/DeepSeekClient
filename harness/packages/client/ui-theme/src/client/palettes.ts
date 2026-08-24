@@ -96,17 +96,45 @@ export interface ChatPreset {
   id: string
   /** Row label key. */
   labelKey: ThemeKey
-  /** CSS `background` value; absent on `none`. */
-  css?: string
+  /** CSS `background` used while the light palette is active; absent on `none`. */
+  light?: string
+  /** CSS `background` used while the dark palette is active; absent on `none`. */
+  dark?: string
 }
 
-/** Backdrop presets, in row order. A custom colour is stored as its own hex. */
+/**
+ * Backdrop presets, in row order. A custom colour is stored as its own hex.
+ *
+ * 每个预设都有明暗两套，而不是一套配色靠透明度去适配两种主题：背景要垫在正文
+ * 之下，浅色主题下必须**比底色深**、深色主题下必须**比底色浅**才看得见。同一
+ * 组浅色渐变压到 18% 盖在白底上几乎消失，那不是"淡"，是溶掉了。
+ */
 export const CHAT_PRESETS: readonly ChatPreset[] = [
   { id: 'none', labelKey: 'chat.none' },
-  { id: 'aurora', labelKey: 'chat.aurora', css: 'linear-gradient(135deg, #5b7cff, #47d6c0 55%, #9d6bff)' },
-  { id: 'dusk', labelKey: 'chat.dusk', css: 'linear-gradient(160deg, #f2709c, #ff9472)' },
-  { id: 'mint', labelKey: 'chat.mint', css: 'linear-gradient(140deg, #43c6ac, #d7f9ef)' },
-  { id: 'ember', labelKey: 'chat.ember', css: 'linear-gradient(150deg, #f7971e, #cf3d3d)' },
+  {
+    id: 'aurora',
+    labelKey: 'chat.aurora',
+    light: 'linear-gradient(135deg, #2540b8, #0e8f86 55%, #5b2fb0)',
+    dark: 'linear-gradient(135deg, #8fb0ff, #6ff0de 55%, #c49bff)',
+  },
+  {
+    id: 'dusk',
+    labelKey: 'chat.dusk',
+    light: 'linear-gradient(160deg, #b4155c, #c2410c)',
+    dark: 'linear-gradient(160deg, #ff9ebd, #ffbe98)',
+  },
+  {
+    id: 'mint',
+    labelKey: 'chat.mint',
+    light: 'linear-gradient(140deg, #0f766e, #15803d)',
+    dark: 'linear-gradient(140deg, #7ff0dd, #c3f7d2)',
+  },
+  {
+    id: 'ember',
+    labelKey: 'chat.ember',
+    light: 'linear-gradient(150deg, #b45309, #9f1239)',
+    dark: 'linear-gradient(150deg, #fcc652, #ff9a8b)',
+  },
 ]
 
 /** Lower strength bound. */
@@ -147,10 +175,20 @@ export function buildOverrides(paletteId: string, accent: string): ThemeTokenOve
 /**
  * Build the conversation backdrop stylesheet.
  *
- * The backdrop is painted by a pseudo-element rather than set as the scroll
- * container's own `background`: that container scrolls, and a background set on
- * it scrolls away with the content instead of staying put behind it. The layer
- * also must not take pointer events, or message text stops being selectable.
+ * Anchored on `[data-conversation-root]` — the element that holds the header,
+ * the transcript, and the composer, and that does not itself scroll. The
+ * obvious target is the scrollport, but an absolutely positioned layer inside a
+ * scrolling box **scrolls away with the content**: the backdrop then covers the
+ * first screenful and leaves everything below it, the composer included, bare.
+ *
+ * Painted by a pseudo-element rather than as the element's own `background`,
+ * because that slot already carries the opaque page ground. The layer must also
+ * stay out of hit-testing, or message text stops being selectable.
+ *
+ * Presets carry one gradient per palette mode: a backdrop sits under body text,
+ * so it has to be darker than a light ground and lighter than a dark one. A
+ * custom colour is used as picked in both modes — it is the user's own choice
+ * and it has to match the swatch they clicked.
  *
  * @param selection - `none`, a preset id, or a `#rrggbb` colour.
  * @param opacity - backdrop strength; clamped to the documented bounds.
@@ -158,20 +196,24 @@ export function buildOverrides(paletteId: string, accent: string): ThemeTokenOve
  */
 export function buildBackdropCss(selection: string, opacity: number): string {
   const preset = CHAT_PRESETS.find(entry => entry.id === selection)
-  const background = preset?.css ?? (HEX.test(selection) ? selection : undefined)
-  if (background === undefined) return ''
+  const custom = HEX.test(selection) ? selection : undefined
+  const light = preset?.light ?? custom
+  const dark = preset?.dark ?? custom
+  if (light === undefined || dark === undefined) return ''
   const strength = Math.min(CHAT_OPACITY_MAX, Math.max(CHAT_OPACITY_MIN, opacity))
   return [
-    '[data-conversation-scroll] { position: relative; }',
-    '[data-conversation-scroll]::before {',
+    '[data-conversation-root] { position: relative; }',
+    '[data-conversation-root]::before {',
     "  content: '';",
     '  position: absolute;',
     '  inset: 0;',
     '  pointer-events: none;',
     '  z-index: 0;',
     `  opacity: ${strength};`,
-    `  background: ${background};`,
+    `  background: ${light};`,
     '}',
-    '[data-conversation-scroll] > * { position: relative; z-index: 1; }',
+    `body[data-ds-dark-theme] [data-conversation-root]::before { background: ${dark}; }`,
+    // 内容要压在背景之上，否则会被伪元素盖住。
+    '[data-conversation-root] > * { position: relative; z-index: 1; }',
   ].join('\n')
 }

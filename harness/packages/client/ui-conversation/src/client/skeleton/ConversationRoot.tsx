@@ -183,8 +183,12 @@ export function ConversationRoot({
     </div>
   )
 
+  // `data-conversation-root` marks the element that spans the header, the
+  // transcript, and the composer without scrolling itself. A decorative layer
+  // anchored on the scrollport instead scrolls away with the content, leaving
+  // everything past the first screenful uncovered.
   return (
-    <div className={css.root} data-phase={phase}>
+    <div className={css.root} data-phase={phase} data-conversation-root="">
       {renderSlot('conversation.session.header', {})}
       <div className={css.scrollBody} data-conversation-scroll="">
         {renderSlot('conversation.session', {})}
