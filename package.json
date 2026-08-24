@@ -1,0 +1,13 @@
+{
+  "name": "dsh-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DeepSeek Harness 桌面壳：把 web profile 收进一个原生窗口，用户看不到浏览器",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^43.4.1"
+  }
+}
