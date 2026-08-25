@@ -21,7 +21,7 @@ const { installMenu, currentLocale, petEnabled, readPrefs, writePrefs } = requir
 const { createNotifier } = require('./host/notifications.js')
 const { createTray } = require('./host/tray.js')
 const { createPet } = require('./host/pet.js')
-const { localDay, shouldRoll } = require('./host/pet-memory.js')
+const { localDay, shouldRoll, strayPetSessions } = require('./host/pet-memory.js')
 const { createPetObserver, textOf } = require('./host/pet-observer.js')
 const { createAnnouncer, composeAnnouncement } = require('./host/pet-announce.js')
 
@@ -467,13 +467,35 @@ if (!app.requestSingleInstanceLock()) {
       /**
        * 宠物会话，连同它建立的那一天。
        *
-       * 宠物的记忆是**暂时的**：随口问的东西不该在几天后还压在上下文里影响回答。
-       * 跨过本地日历日就换一个会话，昨天的事就此翻篇；"新话题"手动换也走同一条路。
+       * **始终只有一条。** 宠物是桌面上的一个摆件，不是一个项目 —— 跟她说的话不该
+       * 在侧边栏里堆成一列会话，更不该每次开应用就多出一条。
        *
-       * 过期规则本身在 host/pet-memory.js —— 跨天这条分支等一天才触发一次，留在
-       * 这里就只能靠读代码相信它。
+       * 记在偏好里而不是只放内存：只放内存的话，每次启动都会另起一条，而旧的那些
+       * 全留在会话列表里。会话 id 由我们预先指定，`session.create` 对同一个
+       * id + cwd 是幂等的，于是重启之后接着用的还是同一条。
+       *
+       * 记忆仍是**暂时的**：随口问的东西不该在几天后还压在上下文里影响回答。跨过
+       * 本地日历日就换一条，昨天的事就此翻篇；"新话题"手动换也走同一条路。过期规则
+       * 本身在 host/pet-memory.js —— 跨天这条分支等一天才触发一次，留在这里就只能
+       * 靠读代码相信它。
+       *
+       * @type {{id: string, day: string, greetedAs: string} | null}
        */
-      let petSession = null
+      let petSession = (() => {
+        const p = readPrefs()
+        if (typeof p.petSessionId !== 'string' || typeof p.petSessionDay !== 'string') return null
+        return { id: p.petSessionId, day: p.petSessionDay, greetedAs: String(p.petGreetedAs ?? '') }
+      })()
+
+      /** 把当前这条记下来，好让下次启动接着用。 */
+      const rememberPetSession = () => {
+        writePrefs({
+          ...readPrefs(),
+          petSessionId: petSession?.id,
+          petSessionDay: petSession?.day,
+          petGreetedAs: petSession?.greetedAs,
+        })
+      }
 
       const showMainWindow = () => {
         if (win === null || win.isDestroyed()) return
@@ -491,7 +513,10 @@ if (!app.requestSingleInstanceLock()) {
           getLocale: currentLocale,
           onActivate: showMainWindow,
           onFreshTopic: () => {
+            // 只丢掉引用即可：下一句话会照常开一条新的并藏起来。偏好里的旧 id 一并
+            // 清掉，否则重启后又会接回刚被丢掉的那条。
             petSession = null
+            rememberPetSession()
             pet?.say(currentLocale() === 'zh' ? '好，换个话题' : 'Fresh topic', 2600)
           },
           position: readPrefs().petPosition,
@@ -539,33 +564,88 @@ if (!app.requestSingleInstanceLock()) {
         } catch { return '' }
       }
 
+      /**
+       * 把一条会话从所有分组界面里摘掉。
+       *
+       * 跟摆件说的话不该在侧边栏里占位置。宠物会话没有登记工作区，于是落进"未分组"
+       * 那一栏 —— 那正是用户看到的"分组"。归档是上游给的唯一隐藏手段：会话本身照常
+       * 活着、照常收发，只是不在任何分组界面出现（见 workspace.archiveSession）。
+       *
+       * 失败不上抛：藏不住只是难看，不该因此连话都发不出去。
+       */
+      const hideSession = async (sessionId) => {
+        try { await call('workspace.archiveSession', { sessionId }) }
+        catch (err) { warnOnce('pet-archive', err) }
+      }
+
+      /**
+       * 开一条新的宠物会话（并藏起来）。
+       *
+       * id 由我们指定：`session.create` 对同一个 id + cwd 是幂等的，所以重启之后拿
+       * 着存下来的 id 再调一次，接上的还是原来那条，而不是又多一条。
+       */
+      const openPetSession = async (day) => {
+        // 目录得是真的：session.create 拿 cwd 去登记，路径不存在会被拒。
+        fs.mkdirSync(PET_WORKSPACE, { recursive: true })
+        const id = `session-${randomUUID()}`
+        const created = (await call('session.create', {
+          sessionId: id,
+          cwd: PET_WORKSPACE,
+          agentPreset: 'pet',
+        }))?.sessionId ?? null
+        if (created === null) return null
+        await hideSession(created)
+        petSession = { id: created, day, greetedAs: '' }
+        rememberPetSession()
+        return petSession
+      }
+
+      /**
+       * 启动时把所有宠物会话扫一遍藏起来。
+       *
+       * 只在新建时藏是不够的：这个目录下可能已经堆了一批（早先的版本每次启动都另起
+       * 一条），而且归档集是全局持久的，重复归档是幂等的。按 cwd 认而不是按记下来的
+       * id 认 —— 记下来的只有最新那条，早先那些正是要清掉的。
+       */
+      const sweepPetSessions = async () => {
+        try {
+          const [listed, spaces] = await Promise.all([
+            call('session.list', {}),
+            call('workspace.list', {}),
+          ])
+          const stray = strayPetSessions(
+            listed?.items,
+            spaces?.archivedSessionIds ?? [],
+            PET_WORKSPACE,
+            // Windows 上大小写不敏感，且两边可能一个带尾斜杠一个不带。
+            (p) => path.resolve(p).toLowerCase(),
+          )
+          for (const sessionId of stray) await hideSession(sessionId)
+          if (stray.length > 0) console.log(`[pet] 已从会话列表里收起 ${stray.length} 条宠物会话`)
+        } catch (err) { warnOnce('pet-sweep', err) }
+      }
+
       const petPrompt = async (text) => {
         if (pipe === null) return { ok: false, error: '后台服务尚未就绪' }
         try {
-          // 目录得是真的：session.create 拿 cwd 去登记，路径不存在会被拒。
-          fs.mkdirSync(PET_WORKSPACE, { recursive: true })
           // 跨天就翻篇。判断放在发送前而不是定时器里：宠物大多数时候没人理，定时器
           // 只会在无人使用时空转，而真正要紧的是"今天第一次说话"这一刻。
           const today = localDay()
           const rolled = shouldRoll(petSession, today)
           if (rolled) petSession = null
 
-          if (petSession === null) {
-            const created = (await call('session.create', {
-              cwd: PET_WORKSPACE,
-              agentPreset: 'pet',
-            }))?.sessionId ?? null
-            petSession = created === null ? null : { id: created, day: today, greeted: false }
-          }
+          if (petSession === null) await openPetSession(today)
           const sessionId = petSession?.id ?? null
           if (sessionId === null) return { ok: false, error: '没能建立 MIKU 的会话' }
 
-          // 昵称只在一条会话的**第一句**里交代一次。人设是静态的，读不到设置；每条
-          // 都带上则是把同一句话反复塞进上下文，既费 token 又显得啰嗦。
+          // 昵称只在**改过之后的第一句**里交代一次。人设是静态的，读不到设置；每条
+          // 都带上则是把同一句话反复塞进上下文，既费 token 又显得啰嗦。记下交代过的
+          // 那个名字，改了名才重说一次 —— 否则你在设置里改完，她还会一直叫旧的。
           let outgoing = text
-          if (!petSession.greeted) {
-            petSession.greeted = true
-            const nickname = await readNickname()
+          const nickname = await readNickname()
+          if (nickname !== petSession.greetedAs) {
+            petSession.greetedAs = nickname
+            rememberPetSession()
             if (nickname !== '') {
               const zh = currentLocale() === 'zh'
               const note = zh ? `（称呼我为「${nickname}」）` : `(Call me “${nickname}”.)`
@@ -673,6 +753,12 @@ if (!app.requestSingleInstanceLock()) {
       serveFromPipe()
       registerBridge()
       showApp()
+
+      // 扫一遍历史遗留的宠物会话，把它们从"未分组"里收起来。
+      //
+      // 必须排在 startHarness 之后 —— 它要发 RPC，而在那之前 pipe 还是 null，
+      // 调用会以 HTTP 0 失败。不 await：只关系到列表好不好看，不该让界面等它。
+      void sweepPetSessions()
     } catch (err) {
       // 先打日志再弹框：对话框在某些启动情形下根本显示不出来（无窗口、
       // 被其他模态挡住、CI 环境），那时控制台是唯一的线索。只有对话框的话，

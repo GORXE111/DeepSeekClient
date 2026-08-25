@@ -9,7 +9,7 @@
  * 用法：node desktop/test/pet-memory.test.js
  */
 
-const { localDay, shouldRoll } = require('../host/pet-memory.js')
+const { localDay, shouldRoll, strayPetSessions } = require('../host/pet-memory.js')
 
 let pass = 0
 let fail = 0
@@ -40,6 +40,33 @@ console.log('2) 什么时候该翻篇')
   // 只比字符串是否相等，不比大小 —— 系统时间被往回调时也该翻篇，而不是继续用
   // 一个"未来"的会话。
   check('时间倒退也翻', shouldRoll({ day: '2026-8-26' }, '2026-8-25') === true)
+}
+
+console.log('3) 该从"未分组"里收起来的是哪些')
+{
+  // 大小写 + 分隔符都归一化，模拟 Windows 上 path.resolve().toLowerCase()。
+  const canon = (p) => p.split(String.fromCharCode(92)).join('/').replace(/[/]+$/, '').toLowerCase()
+  const PET = 'C:/Users/admin/.dsh/pet'
+  const rows = [
+    { sessionId: 's1', cwd: 'C:/Users/admin/.dsh/pet' },
+    { sessionId: 's2', cwd: 'E:/DEEPSEEKTest' },
+    { sessionId: 's3', cwd: 'C:' + '\\' + 'Users' + '\\' + 'admin' + '\\' + '.dsh' + '\\' + 'pet' },  // 反斜杠
+    { sessionId: 's4', cwd: 'c:/users/admin/.dsh/PET/' },      // 大小写 + 尾斜杠
+  ]
+  const got = strayPetSessions(rows, [], PET, canon)
+  check('只挑宠物目录下的', got.join(',') === 's1,s3,s4', got.join(','))
+
+  check('已归档的不重复归档', strayPetSessions(rows, ['s1', 's4'], PET, canon).join(',') === 's3',
+    strayPetSessions(rows, ['s1', 's4'], PET, canon).join(','))
+
+  // 踩过的那次：线上摘要的字段是 sessionId，客户端归一化后的形状才叫 id。取错字段
+  // 不报错，只会得到一串 undefined 然后整批归档失败 —— 所以这里明确挡住。
+  check('没有 sessionId 的行跳过', strayPetSessions([{ id: 'x', cwd: PET }], [], PET, canon).length === 0)
+  check('cwd 缺失的行跳过', strayPetSessions([{ sessionId: 's' }], [], PET, canon).length === 0)
+  check('cwd 是空串的行跳过', strayPetSessions([{ sessionId: 's', cwd: '' }], [], PET, canon).length === 0)
+  check('null 行不炸', strayPetSessions([null, { sessionId: 's1', cwd: PET }], [], PET, canon).join(',') === 's1')
+  check('传进来不是数组也不炸', strayPetSessions(undefined, [], PET, canon).length === 0)
+  check('空列表 → 空结果', strayPetSessions([], [], PET, canon).length === 0)
 }
 
 console.log()

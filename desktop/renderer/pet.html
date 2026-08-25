@@ -148,14 +148,15 @@
      这样“任何时候没有在播别的就是 idle”是结构上保证的，而不是靠每个调用点
      自己记得复位。
 
-     用 setTimeout 递归而不是 setInterval：每条动画的节奏不一样（困倦要慢、
-     鼓掌要快），而 idle 还要在一轮眨眼之后停一会儿再眨 —— 定长间隔表达不了
-     这些。逐帧重排定时器听着啰嗦，但省掉了一整套“改速率就得重建 interval”的
-     状态管理。 */
+     每条底色都一直循环，包括 idle —— 没有"停在某一帧等着"这回事。
+
+     用 setTimeout 递归而不是 setInterval：每条动画的节奏差得远（鼓掌 170ms 一帧，
+     idle 500ms 一帧），而底色随时会换。逐帧重排定时器听着啰嗦，但省掉了一整套
+     “改速率就得重建 interval”的状态管理。 */
 
   /** 各动画的单帧毫秒数。像素动画的味道来自帧率低而稳定，别跟着刷新率跑。 */
   const RATE = {
-    idle: 170, thinking: 260, sleepy: 430, wave: 190,
+    idle: 500, thinking: 260, sleepy: 430, wave: 190,
     shy: 210, happy: 200, clap: 170, sad: 260,
   }
 
@@ -179,21 +180,19 @@
 
   const draw = () => { drawSprite(ctx, current(), frame, SCALE) }
 
-  /** 眨完一轮之后停多久。带随机是因为等间隔的眨眼一眼就看得出是机器。 */
-  const idleHold = () => 2600 + Math.random() * 3400
-
   const schedule = (ms) => { clearTimeout(timer); timer = setTimeout(step, ms) }
 
   const step = () => {
     const anim = current()
     frame = (frame + 1) % FRAMES
     draw()
-    if (frame === 0) {
-      // 一次性动画放到头就让位，并立刻把底色的第 0 帧画出来 —— 否则会留着
-      // 上一条的末帧空等一个间隔，看着像卡了一下。
-      if (shot !== null) { shot = null; draw(); schedule(RATE[base] ?? 220); return }
-      // idle 那条是眨眼，连着播就是规律抽搐；放完一轮停一会儿才像在发呆。
-      if (anim === 'idle') { schedule(idleHold()); return }
+    // 一次性动画放到头就让位，并立刻把底色的第 0 帧画出来 —— 否则会留着上一条
+    // 的末帧空等一个间隔，看着像卡了一下。
+    if (frame === 0 && shot !== null) {
+      shot = null
+      draw()
+      schedule(RATE[base] ?? 220)
+      return
     }
     schedule(RATE[anim] ?? 220)
   }

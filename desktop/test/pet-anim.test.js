@@ -119,15 +119,17 @@ async function main() {
   check('素材就绪后报到了一次', readyCalls === 1, String(readyCalls))
   check('三条推送都接上了', subs.state !== null && subs.play !== null && subs.say !== null)
 
-  console.log('2) idle 自己会动，一轮眨完停下来')
+  console.log('2) idle 一直循环，0.5 秒一帧')
   const seen = new Set()
-  for (let i = 0; i < 4; i++) { advance(180); seen.add(painted.frame) }
+  for (let i = 0; i < 4; i++) { advance(500); seen.add(painted.frame) }
   check('四帧都画过', seen.size === 4, [...seen].join(','))
-  check('停在第 0 帧', painted.frame === 0, at())
-  advance(2000)                       // 短于最短停顿 2600
-  check('停顿期间不换帧', painted.anim === 'idle' && painted.frame === 0, at())
-  advance(4000)                       // 长于最长停顿 6000
-  check('停顿结束继续眨', painted.anim === 'idle', at())
+  check('一轮之后回到第 0 帧', painted.frame === 0, at())
+  // 不停顿：以前 idle 播完一轮要停 2.6–6 秒，看着像卡住了。
+  advance(500)
+  check('立刻接着播下一轮', painted.anim === 'idle' && painted.frame === 1, at())
+  let ticks = 0
+  for (let i = 0; i < 20; i++) { const before = painted.frame; advance(500); if (painted.frame !== before) ticks++ }
+  check('十秒里换了 20 帧', ticks === 20, String(ticks))
 
   console.log('3) 状态推送映射到底色')
   pushState('running');   check('running → thinking', painted.anim === 'thinking', at())
