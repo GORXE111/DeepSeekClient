@@ -19,8 +19,8 @@ const check = (name, cond, extra = '') => {
   else { fail++; console.log('  FAIL ' + name + (extra === '' ? '' : '  → ' + extra)) }
 }
 
-/** 包一条下行帧。 */
-const frame = (sessionId, event) => JSON.stringify({ payload: { type: 'session/event', sessionId, event } })
+/** 包一条下行帧。旁观器现在收已解析的 payload —— 解析归调用方一处做。 */
+const frame = (sessionId, event) => ({ type: 'session/event', sessionId, event })
 const userMsg = (text) => ({ type: 'user/message', data: { content: [{ type: 'text', text }] } })
 const asstMsg = (text) => ({ type: 'assistant/message', data: { message: { content: [{ type: 'text', text }] } } })
 const toolCall = () => ({ type: 'tool/call', data: {} })
@@ -113,16 +113,17 @@ console.log('6) 空转的一轮不出素材')
 console.log('7) 坏数据不能带倒载体')
 {
   const { obs, digests } = setup()
-  const survives = (label, text) => {
-    try { obs.observe(text); check(label, true) } catch (e) { check(label, false, String(e.message)) }
+  const survives = (label, payload) => {
+    try { obs.observe(payload); check(label, true) } catch (e) { check(label, false, String(e.message)) }
   }
-  survives('不是 JSON', '这不是 json')
-  survives('payload 是 null', JSON.stringify({ payload: null }))
-  survives('payload 是数字', JSON.stringify({ payload: 7 }))
-  survives('缺 event', JSON.stringify({ payload: { type: 'session/event', sessionId: 'a' } }))
+  survives('null', null)
+  survives('数字', 7)
+  survives('字符串', '这不是一帧')
+  survives('空对象', {})
+  survives('缺 event', { type: 'session/event', sessionId: 'a' })
   survives('sessionId 不是字符串', frame(42, userMsg('x')))
   survives('认不得的事件类型', frame('a', { type: '天知道', data: {} }))
-  survives('content 不是数组', JSON.stringify({ payload: { type: 'session/event', sessionId: 'a', event: { type: 'user/message', data: { content: 'x' } } } }))
+  survives('content 不是数组', { type: 'session/event', sessionId: 'a', event: { type: 'user/message', data: { content: 'x' } } })
   check('坏数据没混出素材来', digests.length === 0, String(digests.length))
 }
 

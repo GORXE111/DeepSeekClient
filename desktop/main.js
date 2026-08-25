@@ -301,10 +301,17 @@ function registerBridge() {
         send('dsh:stream-frame', text)
         // 顺带旁听：通知与托盘状态都来自同一批帧，不必再开一条流。
         // 放在转发之后 —— 界面拿到数据的时机不该被通知逻辑拖慢。
-        try { notifier?.observe(text) } catch { /* 通知是附加价值，不能影响载体 */ }
+        //
+        // 只解析一次。旁听方有三个（通知器、旁观器、宠物自己说话），各自解析就是
+        // 每帧三遍 JSON.parse；而流式回答一轮能有几百帧 assistant/chunk，这笔开销
+        // 全花在把同一段文本重复解析上。
+        let payload
+        try { payload = JSON.parse(text)?.payload } catch { return }
+        if (payload === null || typeof payload !== 'object') return
+        try { notifier?.observe(payload) } catch { /* 通知是附加价值，不能影响载体 */ }
         // 坏一帧不能影响载体，但也不能连编程错误一起咽掉 —— 这里曾经吞掉一个
         // 每帧都抛的 ReferenceError，症状是"宠物再也不说话了"，而日志干干净净。
-        try { onPetFrame(text) } catch (err) { warnOnce('pet-frame', err) }
+        try { onPetFrame(payload) } catch (err) { warnOnce('pet-frame', err) }
       },
       onClose: () => { streams.delete(id); send('dsh:stream-close') },
     })
@@ -441,6 +448,8 @@ if (!app.requestSingleInstanceLock()) {
       notifier = createNotifier({
         getWindow: () => win,
         getLocale: currentLocale,
+        // 宠物不是"你的智能体"：她的会话不该影响托盘状态，也不该弹完成通知。
+        isPetSession: (id) => petSession?.id === id,
         onState: (state) => { agentState = state; tray?.setState(state); pet?.setState(state) },
         onSay: (kind, detail) => {
           // 'done' 刻意不在这里说话：干完一轮之后宠物要说的是**总结**，那由旁观器
@@ -658,6 +667,9 @@ if (!app.requestSingleInstanceLock()) {
             mode: 'queue',
             content: [{ type: 'text', text: outgoing }],
           })
+          // 她自己在想 —— 这一下由我们直接驱动，不再走通知器：托盘现在（正确地）
+          // 不把宠物算作"你的智能体"，于是她自己的回合不会再产生状态推送。
+          pet?.setState('running')
           if (rolled) {
             // 忘掉这件事必须让人知道：否则宠物会显得莫名其妙地不记得昨天说过的话。
             pet?.say(currentLocale() === 'zh' ? '新的一天啦，昨天的事 MIKU 忘光光咯' : 'New day~ yesterday is all gone', 3600)
@@ -695,16 +707,17 @@ if (!app.requestSingleInstanceLock()) {
        *
        * 停留时长按字数给：一句"好"挂十几秒是碍事，三行总结给四秒又读不完。
        */
-      const routePetSpeech = (text) => {
+      const routePetSpeech = (frame) => {
         if (pet === undefined || petSession === null) return
-        let frame
-        try { frame = JSON.parse(text)?.payload } catch { return }
         if (frame?.type !== 'session/event' || frame.sessionId !== petSession.id) return
         if (frame.event?.type !== 'assistant/message') return
         const said = textOf(frame.event.data?.message?.content)
         if (said === '') return
         pet.play('happy')
         pet.say(said, Math.min(24000, Math.max(6000, said.length * 220)))
+        // 想完了，回到真实的智能体状态 —— 不是一律回待机：你问她的时候主界面那位
+        // 可能正忙着，那才是她该显示的。
+        pet.setState(agentState)
       }
 
       const petObserver = createPetObserver({
@@ -716,9 +729,9 @@ if (!app.requestSingleInstanceLock()) {
         },
       })
 
-      onPetFrame = (text) => {
-        petObserver.observe(text)
-        routePetSpeech(text)
+      onPetFrame = (frame) => {
+        petObserver.observe(frame)
+        routePetSpeech(frame)
       }
 
       // 三档模式（idle/bubble/open）原样透传。这里曾经写成 expanded === true 的

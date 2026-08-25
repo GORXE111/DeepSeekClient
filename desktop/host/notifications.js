@@ -15,15 +15,16 @@
  *     判断，每次启动都会收到一串假的完成通知。
  *  3. **审批与提问不受第 2 条约束**，它们本身就是"需要你现在处理"。
  *
+ * 宠物那条会话不算数。她不是"你的智能体"：跟桌面摆件说句话不该让托盘显示成
+ * 忙碌，更不该在她答完之后弹一条"任务已完成"。少了这道过滤，问她一句"在吗"
+ * 就会收到一条系统通知说你的智能体干完活了。
+ *
  * 点击通知会把窗口带到前台 —— 通知的意义是让你回来，不是通报一声就完。
  *
  * @module notifications
  */
 
 const { Notification } = require('electron')
-
-/** 见过在跑的会话。用来把"刚跑完"与"本来就没跑"分开。 */
-const running = new Set()
 
 const TEXT = {
   zh: {
@@ -48,8 +49,18 @@ const TEXT = {
  * @param {() => 'zh' | 'en'} deps.getLocale 取界面语言，通知也要跟着走
  * @param {(state: 'idle' | 'running' | 'attention') => void} [deps.onState] 状态变化（托盘与宠物用）
  * @param {(kind: string, detail?: string) => void} [deps.onSay] 同一个事件也让宠物说一句
+ * @param {(sessionId: string) => boolean} [deps.isPetSession] 认出宠物自己那条会话，整条忽略
  */
-function createNotifier({ getWindow, getLocale, onState, onSay }) {
+function createNotifier({ getWindow, getLocale, onState, onSay, isPetSession = () => false }) {
+  /**
+   * 见过在跑的会话。用来把"刚跑完"与"本来就没跑"分开。
+   *
+   * 每个实例各一份。放模块作用域会在实例之间串味：重连后新建一个通知器，旧实例
+   * 留下的会话 id 还在集合里，于是第一批基线帧的 running:false 会被当成"刚跑完"，
+   * 凭空弹出一串完成通知。
+   */
+  const running = new Set()
+
   let attention = false
 
   const publishState = () => {
@@ -86,13 +97,17 @@ function createNotifier({ getWindow, getLocale, onState, onSay }) {
   }
 
   /**
-   * 喂一帧。解析失败就丢掉 —— 通知是附加价值，绝不能因为一帧坏数据
-   * 影响到真正的载体。
+   * 喂一帧（已解析的 payload）。
+   *
+   * 收对象而不是原始文本：同一批帧有三个旁听方，各自解析就是每帧三遍
+   * JSON.parse，而流式回答一轮能有几百帧。解析和容错都归调用方一处做。
+   *
+   * @param {object} frame 一条下行帧的 payload
    */
-  const observe = (text) => {
-    let frame
-    try { frame = JSON.parse(text)?.payload } catch { return }
+  const observe = (frame) => {
     if (frame === null || typeof frame !== 'object') return
+    // 下面这四类帧都带 sessionId，所以一道判断就够，不必逐个分支去挡。
+    if (typeof frame.sessionId === 'string' && isPetSession(frame.sessionId)) return
 
     switch (frame.type) {
       case 'approval/requested':

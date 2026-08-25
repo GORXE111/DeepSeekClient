@@ -82,12 +82,14 @@ function createPetObserver({ isPetSession, onDigest, now = Date.now }) {
   }
 
   /**
-   * 喂一帧。解析失败就丢掉 —— 旁观是附加价值，绝不能因为一帧坏数据影响载体。
-   * @param {string} text 一条下行帧的原始文本
+   * 喂一帧（已解析的 payload）。
+   *
+   * 收对象而不是原始文本：同一批帧有三个旁听方，各自解析就是每帧三遍
+   * JSON.parse，而流式回答一轮能有几百帧。解析和容错都归调用方一处做。
+   *
+   * @param {object} frame 一条下行帧的 payload
    */
-  const observe = (text) => {
-    let frame
-    try { frame = JSON.parse(text)?.payload } catch { return }
+  const observe = (frame) => {
     if (frame === null || typeof frame !== 'object') return
 
     if (frame.type === 'session/event') {
