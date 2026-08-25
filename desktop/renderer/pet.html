@@ -40,6 +40,25 @@
   }
   @keyframes bob { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-5px) } }
 
+  .tank { cursor: grab }
+
+  /* 被拎起来：停掉自在的上下浮动，改成小幅左右挣扎，并压一层投影表示离开了
+     "水面"。挣扎比单纯倾斜更像活物 —— 静止的倾斜看着像贴纸。 */
+  body.dragging .tank {
+    cursor: grabbing;
+    animation: struggle .26s ease-in-out infinite;
+    filter: drop-shadow(0 8px 12px rgba(0,0,0,.4));
+  }
+  @keyframes struggle {
+    0%   { transform: rotate(-12deg) scale(1.06) }
+    50%  { transform: rotate(6deg) scale(1.06) }
+    100% { transform: rotate(-12deg) scale(1.06) }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    body.dragging .tank { animation: none; transform: rotate(-8deg) }
+  }
+
   body.state-running .tank { animation-duration: 2s }
   body.state-attention .tank { filter: drop-shadow(0 0 8px var(--accent, #5b7cff)) }
 
@@ -149,13 +168,20 @@
   tick()
 
   /** 状态由主进程推送：鱼、托盘、通知看同一份状态，不各自推断。 */
-  window.__dshPetState = (state) => {
+  /** 忙的时候游得快，等人的时候几乎不动 —— 帧率本身就是状态的一部分。 */
+  const rateFor = (s) => (s === 'running' ? 110 : s === 'attention' ? 420 : 220)
+
+  /** 最近一次状态。拖拽结束要靠它把帧率还原，不能一律回到静默。 */
+  let state = 'idle'
+
+  window.__dshPetState = (next) => {
+    state = next ?? 'idle'
     accent = ACCENT[state] ?? ACCENT.idle
     document.documentElement.style.setProperty('--accent', accent)
     body.classList.remove('state-idle', 'state-running', 'state-attention')
-    body.classList.add(`state-${state ?? 'idle'}`)
-    // 忙的时候游得快，等人的时候几乎不动 —— 帧率本身就是状态的一部分。
-    retime(state === 'running' ? 110 : state === 'attention' ? 420 : 220)
+    body.classList.add(`state-${state}`)
+    // 拖拽中的帧率归拖拽管，状态推送不该把它抢回去。
+    if (drag === null) retime(rateFor(state))
     tick()
   }
 
@@ -207,7 +233,53 @@
     }
   }
 
-  tank.addEventListener('click', () => { void setOpen(!open) })
+  /**
+   * 按住鱼拖动。
+   *
+   * 自绘而不是交给 `-webkit-app-region: drag`：系统拖拽会把鼠标事件整个吞掉，页面
+   * 因此不知道自己正被拖，也就播不了挣扎动画。
+   *
+   * 用指针捕获而不是在 window 上听 mousemove：拖动中光标经常跑到这个小窗口之外，
+   * 没有捕获就会中途断流，鱼卡在半路。
+   *
+   * 传增量而不是绝对坐标：窗口本身在跟着移动，用窗口内坐标推算目标位置会和上一帧
+   * 的位移叠加，鱼会自己飞出屏幕。
+   */
+  const DRAG_SLOP = 4
+  let drag = null
+
+  tank.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    tank.setPointerCapture(e.pointerId)
+    drag = { x: e.screenX, y: e.screenY, travelled: 0 }
+    body.classList.add('dragging')
+    retime(70)
+  })
+
+  tank.addEventListener('pointermove', (e) => {
+    if (drag === null) return
+    const dx = e.screenX - drag.x
+    const dy = e.screenY - drag.y
+    if (dx === 0 && dy === 0) return
+    drag.travelled += Math.abs(dx) + Math.abs(dy)
+    drag.x = e.screenX
+    drag.y = e.screenY
+    window.__dshPet?.moveBy(dx, dy)
+  })
+
+  const endDrag = (e) => {
+    if (drag === null) return
+    // 手一抖也算按下，所以低于这点位移的一律当点击 —— 否则想点开却总是"拖了一下"。
+    const tapped = drag.travelled <= DRAG_SLOP
+    drag = null
+    body.classList.remove('dragging')
+    retime(rateFor(state))
+    if (tapped) void setOpen(!open)
+  }
+  tank.addEventListener('pointerup', endDrag)
+  tank.addEventListener('pointercancel', endDrag)
+
   tank.addEventListener('contextmenu', (e) => { e.preventDefault(); window.__dshPet?.menu() })
   input.addEventListener('input', () => { send.disabled = input.value.trim() === '' })
 

@@ -21,6 +21,7 @@ const { installMenu, currentLocale, petEnabled, readPrefs, writePrefs } = requir
 const { createNotifier } = require('./host/notifications.js')
 const { createTray } = require('./host/tray.js')
 const { createPet } = require('./host/pet.js')
+const { localDay, shouldRoll } = require('./host/pet-memory.js')
 
 const DESKTOP = __dirname
 
@@ -422,8 +423,16 @@ if (!app.requestSingleInstanceLock()) {
         onQuit: () => { app.quit() },
       })
 
-      /** 宠物会话。整个进程期内复用同一个，"新话题"才换。 */
-      let petSessionId = null
+      /**
+       * 宠物会话，连同它建立的那一天。
+       *
+       * 宠物的记忆是**暂时的**：随口问的东西不该在几天后还压在上下文里影响回答。
+       * 跨过本地日历日就换一个会话，昨天的事就此翻篇；"新话题"手动换也走同一条路。
+       *
+       * 过期规则本身在 host/pet-memory.js —— 跨天这条分支等一天才触发一次，留在
+       * 这里就只能靠读代码相信它。
+       */
+      let petSession = null
 
       const showMainWindow = () => {
         if (win === null || win.isDestroyed()) return
@@ -439,7 +448,7 @@ if (!app.requestSingleInstanceLock()) {
           getLocale: currentLocale,
           onActivate: showMainWindow,
           onFreshTopic: () => {
-            petSessionId = null
+            petSession = null
             pet?.say(currentLocale() === 'zh' ? '好，换个话题' : 'Fresh topic', 2600)
           },
           position: readPrefs().petPosition,
@@ -478,7 +487,13 @@ if (!app.requestSingleInstanceLock()) {
         try {
           // 目录不存在时先建：workspace.create 会对路径取 realpath，目录得是真的。
           fs.mkdirSync(PET_WORKSPACE, { recursive: true })
-          if (petSessionId === null) {
+          // 跨天就翻篇。判断放在发送前而不是定时器里：宠物大多数时候没人理，
+          // 定时器只会在无人使用时空转，而真正要紧的是"今天第一次说话"这一刻。
+          const today = localDay()
+          const rolled = shouldRoll(petSession, today)
+          if (rolled) petSession = null
+
+          if (petSession === null) {
             const made = await call('workspace.create', { path: PET_WORKSPACE })
             const workspaceId = made?.workspace?.workspaceId
             // 默认标题是目录名（pet），只在**首次创建**时改成本地化的名字 ——
@@ -495,17 +510,22 @@ if (!app.requestSingleInstanceLock()) {
             // 两者互斥（服务端原话："accepts workspaceId or cwd, not both"）：
             // 工作区自己带着路径，给了 id 就不必再给 cwd。登记失败时退回 cwd，
             // 会话会掉进"未分组"，但至少还能发出去。
-            petSessionId = (await call('session.create',
+            const created = (await call('session.create',
               workspaceId === undefined ? { cwd: PET_WORKSPACE } : { workspaceId },
             ))?.sessionId ?? null
+            petSession = created === null ? null : { id: created, day: today }
           }
-          const sessionId = petSessionId
+          const sessionId = petSession?.id ?? null
           if (sessionId === null) return { ok: false, error: '没能建立宠物会话' }
           await call('session.prompt', {
             sessionId,
             mode: 'queue',
             content: [{ type: 'text', text }],
           })
+          if (rolled) {
+            // 忘掉这件事必须让人知道：否则宠物会显得莫名其妙地不记得昨天说过的话。
+            pet?.say(currentLocale() === 'zh' ? '新的一天，昨天的事我忘啦' : 'New day — yesterday is gone', 3600)
+          }
           return { ok: true }
         } catch (err) {
           return { ok: false, error: String(err && err.message ? err.message : err).slice(0, 120) }
@@ -517,6 +537,7 @@ if (!app.requestSingleInstanceLock()) {
       ipcMain.handle('dsh:pet-resize', (_e, mode) => { pet?.resize(String(mode)) })
       ipcMain.handle('dsh:pet-ask', (_e, text) => petAsk(String(text ?? '')))
       ipcMain.on('dsh:pet-activate', () => { pet?.handleActivate() })
+      ipcMain.on('dsh:pet-move', (_e, dx, dy) => { pet?.moveBy(Number(dx) || 0, Number(dy) || 0) })
       ipcMain.on('dsh:pet-menu', () => { pet?.handleMenu() })
       if (petEnabled()) setPet(true)
 

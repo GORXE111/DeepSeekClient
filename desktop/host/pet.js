@@ -79,12 +79,24 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
 
   void win.loadFile(path.join(desktopDir, 'renderer', 'pet.html'))
 
-  // 拖完才落盘：拖动过程中每一帧都写文件毫无意义。
-  win.on('moved', () => {
-    if (win.isDestroyed()) return
-    const [x, y] = win.getPosition()
-    onMoved({ x, y })
-  })
+  /**
+   * 拖完才落盘：拖动过程中每一帧都写文件毫无意义。
+   *
+   * 必须由移动本身驱动，不能只挂 `moved` 事件 —— Windows 上程序化的
+   * `setPosition` **不发** `moved`，而自绘拖拽全靠 setPosition。只听事件的话，
+   * 拖到哪里都不会记住，重启后鱼弹回原处，而且过程里没有任何报错。
+   */
+  let persistTimer
+  const schedulePersist = () => {
+    clearTimeout(persistTimer)
+    persistTimer = setTimeout(() => {
+      if (win.isDestroyed()) return
+      const [x, y] = win.getPosition()
+      onMoved({ x, y })
+    }, 400)
+  }
+  // 系统发起的移动（比如显示器变更后的重排）仍走事件。
+  win.on('moved', schedulePersist)
 
   const showMenu = () => {
     const t = LABELS[getLocale()] ?? LABELS.en
@@ -115,6 +127,23 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
       win.setFocusable(mode === 'open')
       win.setBounds({ x, y, ...size })
       if (mode === 'open') win.focus()
+    },
+
+    /**
+     * 按增量挪窗口。
+     *
+     * 拖拽自绘而不是交给 `-webkit-app-region: drag`：系统拖拽会把鼠标事件整个吞
+     * 掉，页面因此拿不到"正在被拖"这个事实，也就播不了挣扎动画。代价是位置要自
+     * 己算，收益是拖拽期间的表现完全归页面管。
+     *
+     * 收增量而不是绝对坐标：窗口在拖动中不断移动，页面若用窗口内坐标推算目标位
+     * 置，每一帧都会和上一帧的移动叠加，鱼会自己飞走。
+     */
+    moveBy: (dx, dy) => {
+      if (win.isDestroyed()) return
+      const [x, y] = win.getPosition()
+      win.setPosition(Math.round(x + dx), Math.round(y + dy))
+      schedulePersist()
     },
 
     /** 让鱼说一句话。 */
