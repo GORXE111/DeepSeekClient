@@ -22,6 +22,7 @@ const { createNotifier } = require('./host/notifications.js')
 const { createTray } = require('./host/tray.js')
 const { createPet } = require('./host/pet.js')
 const { localDay, shouldRoll } = require('./host/pet-memory.js')
+const { createPetObserver, textOf } = require('./host/pet-observer.js')
 
 const DESKTOP = __dirname
 
@@ -83,6 +84,14 @@ let tray
 let pet
 /** 最近一次状态。宠物是后开的，开的时候要能立刻显示当前状态而不是从空闲开始。 */
 let agentState = 'idle'
+
+/**
+ * 每一帧也交给鱼一份。
+ *
+ * 帧处理器注册在更外层，拿不到鱼那一块里的闭包，所以留一个模块级钩子由那边填。
+ * 默认是空函数：鱼没开时这条路径什么也不做，调用点不必判空。
+ */
+let onPetFrame = () => {}
 
 // ---------------------------------------------------------------- harness
 
@@ -267,6 +276,7 @@ function registerBridge() {
         // 顺带旁听：通知与托盘状态都来自同一批帧，不必再开一条流。
         // 放在转发之后 —— 界面拿到数据的时机不该被通知逻辑拖慢。
         try { notifier?.observe(text) } catch { /* 通知是附加价值，不能影响载体 */ }
+        try { onPetFrame(text) } catch { /* 旁观同理：坏一帧不能影响载体 */ }
       },
       onClose: () => { streams.delete(id); send('dsh:stream-close') },
     })
@@ -405,14 +415,17 @@ if (!app.requestSingleInstanceLock()) {
         getLocale: currentLocale,
         onState: (state) => { agentState = state; tray?.setState(state); pet?.setState(state) },
         onSay: (kind, detail) => {
+          // 'done' 刻意不在这里说话：干完一轮之后鱼要说的是**总结**，那由旁观器
+          // 触发（见 petObserver）。这里再喊一句"忙完啦"，只会抢在总结前面把气泡
+          // 占掉，然后被总结顶掉 —— 两句话打架，哪句都没看清。
+          if (kind === 'done') return
           const zh = currentLocale() === 'zh'
           const text = {
             approval: zh ? `要用 ${detail}，批准吗？` : `May I use ${detail}?`,
             question: zh ? '我有个问题想问你' : 'I have a question for you',
-            done: zh ? '忙完啦' : 'All done',
             error: zh ? '出错了，去看看？' : 'Something went wrong',
           }[kind]
-          if (text !== undefined) pet?.say(text, kind === 'done' ? 3200 : 6000)
+          if (text !== undefined) pet?.say(text, 6000)
         },
       })
       // DSH_NO_TRAY=1 关掉托盘，用于把它从故障范围里排除。
@@ -457,20 +470,20 @@ if (!app.requestSingleInstanceLock()) {
         pet.setState(agentState)
       }
       /**
-       * 把一句话发给宠物自己的会话。
+       * 把一段话交给鱼的会话。
        *
-       * 会话建在宠物专属的工作区里：随口问的东西和你在主界面认真推进的项目不该
-       * 混在一起 —— 前者是随手记，后者有上下文。
+       * 用户直接问、以及旁观到一轮结束后请它总结，走的是**同一条会话** —— 这样
+       * "第二点展开说说"这种追问才接得上，不必在两个面上来回切。
        *
-       * 光给 cwd 是不够的。cwd 只决定 agent 的工作目录，会话在侧边栏仍会掉进
-       * "未分组"，和别的临时会话堆在一处；要真正分开，必须显式登记工作区并把
-       * workspaceId 交给 session.create。workspace.create 是幂等的（同一路径重复
-       * 调用返回 created:false 与同一个 id），所以每次直接调用即可，不必先查。
+       * 会话用 `pet` 预设：那份人设定义了它是谁、怎么说话、以及它没有任何工具。
+       * 工作目录仍指向 ~/.dsh/pet，与主界面的项目隔开。
        *
-       * 失败原因原样回给页面 —— 悄悄吞掉的话，用户只会觉得"我发了但什么都没
+       * 不登记可见工作区：鱼是旁观者而不是一个项目，在侧边栏占一栏只是噪音。
+       *
+       * 失败原因原样回给调用方 —— 悄悄吞掉的话，用户只会觉得"我发了但什么都没
        * 发生"，那比报错更糟。
        */
-      const petAsk = async (text) => {
+      const petPrompt = async (text) => {
         if (pipe === null) return { ok: false, error: '后台服务尚未就绪' }
         const call = async (method, payload) => {
           const r = await unary(pipe, {
@@ -485,45 +498,30 @@ if (!app.requestSingleInstanceLock()) {
           return parsed.result.value
         }
         try {
-          // 目录不存在时先建：workspace.create 会对路径取 realpath，目录得是真的。
+          // 目录得是真的：session.create 拿 cwd 去登记，路径不存在会被拒。
           fs.mkdirSync(PET_WORKSPACE, { recursive: true })
-          // 跨天就翻篇。判断放在发送前而不是定时器里：宠物大多数时候没人理，
-          // 定时器只会在无人使用时空转，而真正要紧的是"今天第一次说话"这一刻。
+          // 跨天就翻篇。判断放在发送前而不是定时器里：鱼大多数时候没人理，定时器
+          // 只会在无人使用时空转，而真正要紧的是"今天第一次说话"这一刻。
           const today = localDay()
           const rolled = shouldRoll(petSession, today)
           if (rolled) petSession = null
 
           if (petSession === null) {
-            const made = await call('workspace.create', { path: PET_WORKSPACE })
-            const workspaceId = made?.workspace?.workspaceId
-            // 默认标题是目录名（pet），只在**首次创建**时改成本地化的名字 ——
-            // 之后用户自己改的名字必须留住。改名失败纯属外观问题，不能让它挡住
-            // 这条消息。
-            if (made?.created === true && workspaceId !== undefined) {
-              try {
-                await call('workspace.rename', {
-                  workspaceId,
-                  title: currentLocale() === 'zh' ? '宠物' : 'Pet',
-                })
-              } catch { /* 标题没改成，会话照发 */ }
-            }
-            // 两者互斥（服务端原话："accepts workspaceId or cwd, not both"）：
-            // 工作区自己带着路径，给了 id 就不必再给 cwd。登记失败时退回 cwd，
-            // 会话会掉进"未分组"，但至少还能发出去。
-            const created = (await call('session.create',
-              workspaceId === undefined ? { cwd: PET_WORKSPACE } : { workspaceId },
-            ))?.sessionId ?? null
+            const created = (await call('session.create', {
+              cwd: PET_WORKSPACE,
+              agentPreset: 'pet',
+            }))?.sessionId ?? null
             petSession = created === null ? null : { id: created, day: today }
           }
           const sessionId = petSession?.id ?? null
-          if (sessionId === null) return { ok: false, error: '没能建立宠物会话' }
+          if (sessionId === null) return { ok: false, error: '没能建立鱼的会话' }
           await call('session.prompt', {
             sessionId,
             mode: 'queue',
             content: [{ type: 'text', text }],
           })
           if (rolled) {
-            // 忘掉这件事必须让人知道：否则宠物会显得莫名其妙地不记得昨天说过的话。
+            // 忘掉这件事必须让人知道：否则鱼会显得莫名其妙地不记得昨天说过的话。
             pet?.say(currentLocale() === 'zh' ? '新的一天，昨天的事我忘啦' : 'New day — yesterday is gone', 3600)
           }
           return { ok: true }
@@ -531,6 +529,55 @@ if (!app.requestSingleInstanceLock()) {
           return { ok: false, error: String(err && err.message ? err.message : err).slice(0, 120) }
         }
       }
+
+      /** 悬浮窗里直接问的那条路。 */
+      const petAsk = (text) => petPrompt(text)
+
+      /**
+       * 把一轮旁观所得交给鱼去总结。
+       *
+       * 素材原样给，不在这里预先裁剪成要点 —— 总结是鱼的活，壳替它想好了，人设
+       * 就形同虚设。
+       */
+      const summaryRequest = (digest) => [
+        '【旁观】主界面那位智能体刚干完一轮。下面是发生的事，用你的话讲给船长听。',
+        '',
+        `船长问：${digest.prompt === '' ? '(这一轮不是他起的头)' : digest.prompt}`,
+        '',
+        `它答：${digest.answer === '' ? '(没有产出文字)' : digest.answer}`,
+        digest.tools > 0 ? String.fromCharCode(10) + `其间调用了 ${digest.tools} 次工具。` : '',
+      ].join(String.fromCharCode(10))
+
+      const petObserver = createPetObserver({
+        isPetSession: (id) => petSession?.id === id,
+        onDigest: (digest) => {
+          // 鱼没开就不打扰后台：没人看的总结只是白花 token。
+          if (pet === undefined) return
+          void petPrompt(summaryRequest(digest))
+        },
+      })
+
+      /**
+       * 鱼自己说的话进气泡。
+       *
+       * 停留时长按字数给：一句"好"挂十几秒是碍事，三行总结给四秒又读不完。
+       */
+      const routePetSpeech = (text) => {
+        if (pet === undefined || petSession === null) return
+        let frame
+        try { frame = JSON.parse(text)?.payload } catch { return }
+        if (frame?.type !== 'session/event' || frame.sessionId !== petSession.id) return
+        if (frame.event?.type !== 'assistant/message') return
+        const said = textOf(frame.event.data?.message?.content)
+        if (said === '') return
+        pet.say(said, Math.min(24000, Math.max(6000, said.length * 220)))
+      }
+
+      onPetFrame = (text) => {
+        petObserver.observe(text)
+        routePetSpeech(text)
+      }
+
       // 三档模式（idle/bubble/open）原样透传。这里曾经写成 expanded === true 的
       // 布尔判断，于是 'open' 被折成 false，点开之后窗口纹丝不动 —— 而页面那边
       // class 已经加上了，看起来像动画失效，实则是尺寸没跟上。

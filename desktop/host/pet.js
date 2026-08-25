@@ -21,9 +21,15 @@ const path = require('node:path')
  * 三档尺寸。窗口永远贴着当前可见内容，不留透明余量 —— 透明区域一样会拦住
  * 下面的点击，而绕开它要靠 setIgnoreMouseEvents 加逐帧命中测试，复杂且容易漏。
  */
+/**
+ * 三档窗口尺寸。
+ *
+ * 气泡这一档按**总结**定大小，而不是按一句"忙完啦" —— 鱼现在的主要输出是三四句
+ * 话的总结，380x112 只装得下一句，多出来的会被裁掉且毫无提示。
+ */
 const BOUNDS = {
   idle: { width: 144, height: 112 },
-  bubble: { width: 380, height: 112 },
+  bubble: { width: 460, height: 188 },
   open: { width: 480, height: 112 },
 }
 

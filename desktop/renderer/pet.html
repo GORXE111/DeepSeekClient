@@ -24,7 +24,7 @@
   }
 
   .tank {
-    flex: none; position: relative;
+    flex: none; align-self: center; position: relative;
     width: 128px; height: 96px;
     cursor: pointer;
     -webkit-app-region: no-drag;
@@ -74,6 +74,12 @@
   }
   /* 气泡也走像素风：直角 + 硬边描边，圆角会和鱼打架。 */
   .bubble {
+    /* 总结可能长过气泡：让它滚而不是裁掉。裁掉是无声的信息丢失，滚动至少
+       让人知道下面还有。 */
+    max-height: 100%;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    line-height: 1.55;
     border-radius: 0;
     box-shadow: 0 0 0 3px rgba(20,24,31,.96), 0 0 0 6px var(--accent, #5b7cff), 0 8px 26px rgba(0,0,0,.36);
     pointer-events: none;
