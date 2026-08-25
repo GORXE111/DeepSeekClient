@@ -93,6 +93,20 @@ let agentState = 'idle'
  */
 let onPetFrame = () => {}
 
+/** 已经喊过的错误。每帧一行会把日志淹掉，而第一行就够定位了。 */
+const warned = new Set()
+
+/**
+ * 报告一个不该发生但不致命的错误，同一处只报一次。
+ * @param {string} where 出错的位置标签
+ * @param {unknown} err 错误对象
+ */
+function warnOnce(where, err) {
+  if (warned.has(where)) return
+  warned.add(where)
+  console.error(`[${where}]`, err)
+}
+
 // ---------------------------------------------------------------- harness
 
 /**
@@ -276,7 +290,9 @@ function registerBridge() {
         // 顺带旁听：通知与托盘状态都来自同一批帧，不必再开一条流。
         // 放在转发之后 —— 界面拿到数据的时机不该被通知逻辑拖慢。
         try { notifier?.observe(text) } catch { /* 通知是附加价值，不能影响载体 */ }
-        try { onPetFrame(text) } catch { /* 旁观同理：坏一帧不能影响载体 */ }
+        // 坏一帧不能影响载体，但也不能连编程错误一起咽掉 —— 这里曾经吞掉一个
+        // 每帧都抛的 ReferenceError，症状是"鱼再也不说话了"，而日志干干净净。
+        try { onPetFrame(text) } catch (err) { warnOnce('pet-frame', err) }
       },
       onClose: () => { streams.delete(id); send('dsh:stream-close') },
     })
@@ -483,20 +499,35 @@ if (!app.requestSingleInstanceLock()) {
        * 失败原因原样回给调用方 —— 悄悄吞掉的话，用户只会觉得"我发了但什么都没
        * 发生"，那比报错更糟。
        */
+      const call = async (method, payload) => {
+        const r = await unary(pipe, {
+          path: `/api/${method}`,
+          body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload }),
+        })
+        if (r.status !== 200) throw new Error(`${method} HTTP ${r.status}`)
+        const parsed = JSON.parse(r.body)
+        if (parsed?.result?.ok !== true) {
+          throw new Error(parsed?.result?.error?.message ?? `${method} 被拒绝`)
+        }
+        return parsed.result.value
+      }
+
+      /**
+       * 读用户给鱼定的昵称（设置 → 通用设置）。
+       *
+       * 读不到就返回空串，届时不称呼 —— 编一个占位（"用户""你好"）比不称呼更糟。
+       */
+      const readNickname = async () => {
+        if (pipe === null) return ''
+        try {
+          const described = await call('settings.describe', {})
+          const section = described?.namespaces?.find((n) => n.ns === 'pet')?.value
+          return String(section?.nickname ?? '').trim().slice(0, 16)
+        } catch { return '' }
+      }
+
       const petPrompt = async (text) => {
         if (pipe === null) return { ok: false, error: '后台服务尚未就绪' }
-        const call = async (method, payload) => {
-          const r = await unary(pipe, {
-            path: `/api/${method}`,
-            body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method, payload }),
-          })
-          if (r.status !== 200) throw new Error(`${method} HTTP ${r.status}`)
-          const parsed = JSON.parse(r.body)
-          if (parsed?.result?.ok !== true) {
-            throw new Error(parsed?.result?.error?.message ?? `${method} 被拒绝`)
-          }
-          return parsed.result.value
-        }
         try {
           // 目录得是真的：session.create 拿 cwd 去登记，路径不存在会被拒。
           fs.mkdirSync(PET_WORKSPACE, { recursive: true })
@@ -511,14 +542,28 @@ if (!app.requestSingleInstanceLock()) {
               cwd: PET_WORKSPACE,
               agentPreset: 'pet',
             }))?.sessionId ?? null
-            petSession = created === null ? null : { id: created, day: today }
+            petSession = created === null ? null : { id: created, day: today, greeted: false }
           }
           const sessionId = petSession?.id ?? null
           if (sessionId === null) return { ok: false, error: '没能建立鱼的会话' }
+
+          // 昵称只在一条会话的**第一句**里交代一次。人设是静态的，读不到设置；每条
+          // 都带上则是把同一句话反复塞进上下文，既费 token 又显得啰嗦。
+          let outgoing = text
+          if (!petSession.greeted) {
+            petSession.greeted = true
+            const nickname = await readNickname()
+            if (nickname !== '') {
+              const zh = currentLocale() === 'zh'
+              const note = zh ? `（称呼我为「${nickname}」）` : `(Call me “${nickname}”.)`
+              outgoing = `${note}${String.fromCharCode(10)}${String.fromCharCode(10)}${text}`
+            }
+          }
+
           await call('session.prompt', {
             sessionId,
             mode: 'queue',
-            content: [{ type: 'text', text }],
+            content: [{ type: 'text', text: outgoing }],
           })
           if (rolled) {
             // 忘掉这件事必须让人知道：否则鱼会显得莫名其妙地不记得昨天说过的话。
@@ -534,28 +579,27 @@ if (!app.requestSingleInstanceLock()) {
       const petAsk = (text) => petPrompt(text)
 
       /**
-       * 把一轮旁观所得交给鱼去总结。
+       * 别的智能体干完一轮，鱼过来报一声。
        *
-       * 素材原样给，不在这里预先裁剪成要点 —— 总结是鱼的活，壳替它想好了，人设
-       * 就形同虚设。
+       * 这条**不经过模型**。早先的做法是把那一轮的问答喂给鱼，让它用自己的话总结，
+       * 结果是总结与实际不符 —— 一个小模型隔着一份被截断的素材去转述另一个模型的
+       * 工作，说错是常态而不是意外，而说错的代价是你以为任务成了。
+       *
+       * 现在只报事实：任务是什么（你自己提的那句话，不可能错）、它完成了。要看内容
+       * 就去主界面，那里有完整的原文。
        */
-      const summaryRequest = (digest) => [
-        '【旁观】主界面那位智能体刚干完一轮。下面是发生的事，用你的话讲给船长听。',
-        '',
-        `船长问：${digest.prompt === '' ? '(这一轮不是他起的头)' : digest.prompt}`,
-        '',
-        `它答：${digest.answer === '' ? '(没有产出文字)' : digest.answer}`,
-        digest.tools > 0 ? String.fromCharCode(10) + `其间调用了 ${digest.tools} 次工具。` : '',
-      ].join(String.fromCharCode(10))
-
-      const petObserver = createPetObserver({
-        isPetSession: (id) => petSession?.id === id,
-        onDigest: (digest) => {
-          // 鱼没开就不打扰后台：没人看的总结只是白花 token。
-          if (pet === undefined) return
-          void petPrompt(summaryRequest(digest))
-        },
-      })
+      const announceDone = async (digest) => {
+        const nickname = await readNickname()
+        const zh = currentLocale() === 'zh'
+        // 折掉换行再截断：气泡是单块文本，原样带换行会把一句话撑成半屏。
+        const task = digest.prompt.replace(/\s+/g, ' ').trim()
+        const brief = task.length > 24 ? `${task.slice(0, 24)}…` : task
+        const address = nickname === '' ? '' : (zh ? `${nickname}，` : `${nickname}, `)
+        const body = brief === ''
+          ? (zh ? '刚才那轮任务搞定了' : 'that task is done')
+          : (zh ? `你的「${brief}」任务搞定了` : `your task “${brief}” is done`)
+        pet?.say(address + body, 9000)
+      }
 
       /**
        * 鱼自己说的话进气泡。
@@ -572,6 +616,15 @@ if (!app.requestSingleInstanceLock()) {
         if (said === '') return
         pet.say(said, Math.min(24000, Math.max(6000, said.length * 220)))
       }
+
+      const petObserver = createPetObserver({
+        isPetSession: (id) => petSession?.id === id,
+        onDigest: (digest) => {
+          // 鱼没开就没人看，不必费事。
+          if (pet === undefined) return
+          void announceDone(digest)
+        },
+      })
 
       onPetFrame = (text) => {
         petObserver.observe(text)

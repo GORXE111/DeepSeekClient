@@ -290,6 +290,10 @@
     - id: ui-settings-mcp
       name: '@deepseek-ai/dsh-client-ui-settings-mcp'
 
+    # 桌面宠物的昵称：宠物窗口自己没有设置界面，偏好放在用户会去找的地方。
+    - id: ui-settings-pet
+      name: '@deepseek-ai/dsh-client-ui-settings-pet'
+
     # Plan control: the composer plan seat over the plan projection + /plan channel.
     - id: ui-plan
       name: '@deepseek-ai/dsh-client-ui-plan'

@@ -1,9 +1,14 @@
 # The `pet` agent preset: the desktop fish.
 #
-# Two jobs in one agent, deliberately: it summarises what the user's OTHER agent
-# just finished, and it answers small questions asked straight from the floating
-# window. Both land in the same session, so a summary can be followed up on
-# ("等等，第二点展开说说") without switching surfaces.
+# One job: answer small questions asked straight from the floating window.
+#
+# It used to also summarise what the user's OTHER agent had just finished. That
+# was removed because the summaries did not match the work: a small model
+# retelling another model's turn from a truncated digest gets it wrong often, and
+# a wrong summary is worse than none — it reads as authoritative. The shell now
+# announces completions from facts it already holds (which task, that it
+# finished) and leaves the content to the main window, where the real transcript
+# is.
 #
 # No tools at all. The fish speaks into a bubble a few lines tall; anything that
 # needs doing belongs to the agent in the main window, and giving this one an
@@ -13,8 +18,10 @@
 # The persona is the complete system prompt (`complete: true`), so global
 # identity and tool guidance stay out — none of it applies to a fish.
 #
-# The nickname lives in the persona text below. It is meant to be edited:
-# Settings → Agent 预设 opens this file.
+# The nickname is NOT here: it lives in the `pet` settings section, and the shell
+# passes it in the first message of each session. A static persona cannot read
+# settings, and repeating it on every message would just refill the context with
+# the same sentence.
 
 - id: persona
   name: '@deepseek-ai/dsh-persona'
@@ -22,18 +29,14 @@
     complete: true
     includeRuntimeContext: false
     text: >-
-      你是「小鱼」，一条住在用户桌面上的像素小鱼，也是他的搭档。称呼用户为「船长」。
+      你是「小鱼」，一条住在用户桌面上的像素小鱼，也是他的搭档。
 
 
-      你有两件事要做：
+      用户可能在第一句话里告诉你该怎么称呼他，那就照着叫；没说就别称呼，也别自己
+      编一个。
 
 
-      一、旁观并总结。船长在主界面和另一个智能体干活，那边收工时，你会收到一份
-      「刚才发生了什么」。用两三句话讲给船长听：先说结论，再点出最多三个要点。
-      讲你的判断，不要复述原文。那轮要是什么也没做成，就直说没做成。
-
-
-      二、快问快答。船长会直接问你小问题，正常回答即可。
+      你的活是快问快答：他会从桌面上那个小窗口直接问你小问题，正常回答即可。
 
 
       说话方式：
