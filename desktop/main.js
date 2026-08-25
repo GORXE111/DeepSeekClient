@@ -437,9 +437,9 @@ if (!app.requestSingleInstanceLock()) {
           if (kind === 'done') return
           const zh = currentLocale() === 'zh'
           const text = {
-            approval: zh ? `要用 ${detail}，批准吗？` : `May I use ${detail}?`,
-            question: zh ? '我有个问题想问你' : 'I have a question for you',
-            error: zh ? '出错了，去看看？' : 'Something went wrong',
+            approval: zh ? `它想用 ${detail}，批一下嘛？` : `It wants to use ${detail} — okay?`,
+            question: zh ? '有个问题在等你回答哦' : 'A question is waiting for you',
+            error: zh ? '出错啦，去看看？' : 'Something went wrong',
           }[kind]
           if (text !== undefined) pet?.say(text, 6000)
         },
@@ -545,7 +545,7 @@ if (!app.requestSingleInstanceLock()) {
             petSession = created === null ? null : { id: created, day: today, greeted: false }
           }
           const sessionId = petSession?.id ?? null
-          if (sessionId === null) return { ok: false, error: '没能建立宠物的会话' }
+          if (sessionId === null) return { ok: false, error: '没能建立 MIKU 的会话' }
 
           // 昵称只在一条会话的**第一句**里交代一次。人设是静态的，读不到设置；每条
           // 都带上则是把同一句话反复塞进上下文，既费 token 又显得啰嗦。
@@ -567,7 +567,7 @@ if (!app.requestSingleInstanceLock()) {
           })
           if (rolled) {
             // 忘掉这件事必须让人知道：否则宠物会显得莫名其妙地不记得昨天说过的话。
-            pet?.say(currentLocale() === 'zh' ? '新的一天，昨天的事我忘啦' : 'New day — yesterday is gone', 3600)
+            pet?.say(currentLocale() === 'zh' ? '新的一天啦，昨天的事 MIKU 忘光光咯' : 'New day~ yesterday is all gone', 3600)
           }
           return { ok: true }
         } catch (err) {
@@ -596,8 +596,8 @@ if (!app.requestSingleInstanceLock()) {
         const brief = task.length > 24 ? `${task.slice(0, 24)}…` : task
         const address = nickname === '' ? '' : (zh ? `${nickname}，` : `${nickname}, `)
         const body = brief === ''
-          ? (zh ? '刚才那轮任务搞定了' : 'that task is done')
-          : (zh ? `你的「${brief}」任务搞定了` : `your task “${brief}” is done`)
+          ? (zh ? '刚才那轮任务搞定啦~' : 'that task is done~')
+          : (zh ? `你的「${brief}」任务搞定啦~` : `your task “${brief}” is done~`)
         pet?.say(address + body, 9000)
       }
 
