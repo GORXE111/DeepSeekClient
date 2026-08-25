@@ -23,6 +23,7 @@ const { createTray } = require('./host/tray.js')
 const { createPet } = require('./host/pet.js')
 const { localDay, shouldRoll } = require('./host/pet-memory.js')
 const { createPetObserver, textOf } = require('./host/pet-observer.js')
+const { createAnnouncer, composeAnnouncement } = require('./host/pet-announce.js')
 
 const DESKTOP = __dirname
 
@@ -280,8 +281,19 @@ function registerBridge() {
       throw new Error(`非法路径 ${String(req?.path)}`)
     }
     const id = req.id
+    /**
+     * 把一帧转给发起这条流的页面。
+     *
+     * isDestroyed() 挡不住全部情况：webContents 还活着，它的渲染帧却可能已经被
+     * 释放（刷新、导航、关窗的那一小段），此时 send 会抛 "Render frame was
+     * disposed"。没有一个可靠的同步谓词能问出这件事，所以只能兜住。
+     *
+     * 兜住而不上报：这是关窗时的正常竞态，不是错误。真正的错误在 openStream 那
+     * 一侧，不会走到这里。
+     */
     const send = (channel, ...args) => {
-      if (!event.sender.isDestroyed()) event.sender.send(channel, id, ...args)
+      if (event.sender.isDestroyed()) return
+      try { event.sender.send(channel, id, ...args) } catch { /* 页面正在拆，收不着了 */ }
     }
     const close = openStream(pipe, req.path, {
       onOpen: () => send('dsh:stream-open'),
@@ -470,7 +482,9 @@ if (!app.requestSingleInstanceLock()) {
         win.focus()
       }
       const setPet = (on) => {
-        if (!on) { pet?.destroy(); pet = undefined; return }
+        // 关掉时把攒着的报喜一并丢掉：等它们到点时宠物已经没了，而下次开宠物
+        // 又冒出几条几分钟前的旧消息，比不报更让人摸不着头脑。
+        if (!on) { announcer.cancel(); pet?.destroy(); pet = undefined; return }
         if (pet !== undefined) return
         pet = createPet({
           desktopDir: DESKTOP,
@@ -483,10 +497,6 @@ if (!app.requestSingleInstanceLock()) {
           position: readPrefs().petPosition,
           onMoved: (pos) => { writePrefs({ ...readPrefs(), petPosition: pos }) },
         })
-        pet.setState(agentState)
-        // 出场先招个手。素材要异步解码，早于 load() 的插播会被首帧覆盖掉，
-        // 所以往后挪一点 —— 招手是给人看的，宁可晚半秒也别没有。
-        setTimeout(() => { pet?.play('wave') }, 700)
       }
       /**
        * 把一段话交给宠物的会话。
@@ -584,26 +594,21 @@ if (!app.requestSingleInstanceLock()) {
       /**
        * 别的智能体干完一轮，宠物过来报一声。
        *
-       * 这条**不经过模型**。早先的做法是把那一轮的问答喂给宠物，让它用自己的话总结，
-       * 结果是总结与实际不符 —— 一个小模型隔着一份被截断的素材去转述另一个模型的
-       * 工作，说错是常态而不是意外，而说错的代价是你以为任务成了。
+       * 值不值得报、几件事该不该并成一句，都由 pet-announce 定 —— 那两条规则各自
+       * 要等几十秒才能在真机上复现一次，放在能直接测的模块里。这里只负责说出来。
        *
-       * 现在只报事实：任务是什么（你自己提的那句话，不可能错）、它完成了。要看内容
-       * 就去主界面，那里有完整的原文。
+       * 停留时长按行数给：一件事一句话，四秒够看；并了五件事的那句有六行，四秒
+       * 只够读个开头。
        */
-      const announceDone = async (digest) => {
-        const nickname = await readNickname()
-        const zh = currentLocale() === 'zh'
-        // 折掉换行再截断：气泡是单块文本，原样带换行会把一句话撑成半屏。
-        const task = digest.prompt.replace(/\s+/g, ' ').trim()
-        const brief = task.length > 24 ? `${task.slice(0, 24)}…` : task
-        const address = nickname === '' ? '' : (zh ? `${nickname}，` : `${nickname}, `)
-        const body = brief === ''
-          ? (zh ? '刚才那轮任务搞定啦~' : 'that task is done~')
-          : (zh ? `你的「${brief}」任务搞定啦~` : `your task “${brief}” is done~`)
-        pet?.play('clap')
-        pet?.say(address + body, 9000)
+      const announceBatch = async (digests) => {
+        if (pet === undefined) return
+        const text = composeAnnouncement(digests, await readNickname(), currentLocale() === 'zh')
+        if (text === '') return
+        pet.play('clap')
+        pet.say(text, Math.min(20000, 6000 + digests.length * 2000))
       }
+
+      const announcer = createAnnouncer({ emit: (batch) => { void announceBatch(batch) } })
 
       /**
        * 宠物自己说的话进气泡。
@@ -625,9 +630,9 @@ if (!app.requestSingleInstanceLock()) {
       const petObserver = createPetObserver({
         isPetSession: (id) => petSession?.id === id,
         onDigest: (digest) => {
-          // 宠物没开就没人看，不必费事。
+          // 宠物没开就没人看，不必攒。
           if (pet === undefined) return
-          void announceDone(digest)
+          announcer.offer(digest)
         },
       })
 
@@ -641,9 +646,19 @@ if (!app.requestSingleInstanceLock()) {
       // class 已经加上了，看起来像动画失效，实则是尺寸没跟上。
       ipcMain.handle('dsh:pet-resize', (_e, mode) => { pet?.resize(String(mode)) })
       ipcMain.handle('dsh:pet-ask', (_e, text) => petAsk(String(text ?? '')))
-      ipcMain.on('dsh:pet-activate', () => { pet?.handleActivate() })
       ipcMain.on('dsh:pet-move', (_e, dx, dy) => { pet?.moveBy(Number(dx) || 0, Number(dy) || 0) })
       ipcMain.on('dsh:pet-menu', () => { pet?.handleMenu() })
+      /**
+       * 页面画得出来了，这才把状态推过去。
+       *
+       * 以前是建完窗口立刻推，而那时页面还没加载完，消息没有接收方 —— 失败被
+       * executeJavaScript 的 catch 悄悄吞掉，于是开宠物时哪怕智能体正在跑，她也
+       * 一律是待机的。改由页面报到之后再推，"什么时候能收"由能收的那一方说了算。
+       */
+      ipcMain.on('dsh:pet-ready', () => {
+        pet?.setState(agentState)
+        pet?.play('wave')   // 出场招个手
+      })
       if (petEnabled()) setPet(true)
 
       // 菜单要等 setPet 定义之后再装：它把 setPet 作为回调交出去，早一步调用

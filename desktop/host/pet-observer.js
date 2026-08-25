@@ -27,6 +27,17 @@ const MAX_ANSWER_CHARS = 4000
 const MAX_PROMPT_CHARS = 600
 
 /**
+ * 同时跟踪的会话数上限。
+ *
+ * 素材是在 `user/message` 建、`turn/end` 删的，可这两件事不保证配对：会话被中途
+ * 删掉、任务被打断、应用退出重连，都会留下一条永远等不到收尾的素材。没有上限的
+ * 话它们就一直堆着 —— 一条素材能拿住 4KB 正文，泄漏得不快，但也从不释放。
+ *
+ * 超了就丢最旧的：Map 的迭代顺序就是插入顺序，第一个键必然是最久没动过的那条。
+ */
+const MAX_TRACKED_SESSIONS = 32
+
+/**
  * 从 content 数组里取出人可读的正文。
  * @param {unknown} content 事件里的 content 数组
  * @returns {string} 拼接后的正文；没有可读部分时为空串
@@ -45,18 +56,27 @@ function textOf(content) {
  *
  * @param {object} deps
  * @param {(sessionId: string) => boolean} deps.isPetSession 判断某个会话是不是宠物自己的
- * @param {(digest: {sessionId: string, prompt: string, answer: string, tools: number}) => void} deps.onDigest
+ * @param {(digest: {sessionId: string, prompt: string, answer: string, tools: number, durationMs: number}) => void} deps.onDigest
  *   一轮结束且确实有内容时回调
+ * @param {() => number} [deps.now] 取当前时刻，测试时可注入
  */
-function createPetObserver({ isPetSession, onDigest }) {
-  /** @type {Map<string, {prompt: string, answers: string[], tools: number}>} */
+function createPetObserver({ isPetSession, onDigest, now = Date.now }) {
+  /** @type {Map<string, {prompt: string, answers: string[], tools: number, startedAt: number}>} */
   const turns = new Map()
+
+  /** 记一条素材，顺手把超出上限的旧条目丢掉。 */
+  const track = (sessionId, entry) => {
+    turns.set(sessionId, entry)
+    while (turns.size > MAX_TRACKED_SESSIONS) turns.delete(turns.keys().next().value)
+  }
 
   const slot = (sessionId) => {
     let entry = turns.get(sessionId)
     if (entry === undefined) {
-      entry = { prompt: '', answers: [], tools: 0 }
-      turns.set(sessionId, entry)
+      // 没见过开头就见到了中段（应用是在会话跑到一半时连上的）。仍然记着，但
+      // startedAt 只能从此刻算 —— 由此得出的时长会偏短，宁可偏短也别凭空编一个。
+      entry = { prompt: '', answers: [], tools: 0, startedAt: now() }
+      track(sessionId, entry)
     }
     return entry
   }
@@ -81,7 +101,7 @@ function createPetObserver({ isPetSession, onDigest }) {
         case 'user/message': {
           // 新一轮开始，旧素材作废 —— 攒跨轮的内容只会让总结越来越含糊。
           const prompt = textOf(event.data?.content)
-          turns.set(sessionId, { prompt: prompt.slice(0, MAX_PROMPT_CHARS), answers: [], tools: 0 })
+          track(sessionId, { prompt: prompt.slice(0, MAX_PROMPT_CHARS), answers: [], tools: 0, startedAt: now() })
           return
         }
         case 'assistant/message': {
@@ -105,6 +125,8 @@ function createPetObserver({ isPetSession, onDigest }) {
             prompt: entry.prompt,
             answer: answer.slice(0, MAX_ANSWER_CHARS),
             tools: entry.tools,
+            // 跑了多久是"这轮算不算正经活"的主要依据，见 pet-announce.js。
+            durationMs: Math.max(0, now() - entry.startedAt),
           })
           return
         }
@@ -120,4 +142,4 @@ function createPetObserver({ isPetSession, onDigest }) {
   return { observe, forget }
 }
 
-module.exports = { createPetObserver, textOf, MAX_ANSWER_CHARS, MAX_PROMPT_CHARS }
+module.exports = { createPetObserver, textOf, MAX_ANSWER_CHARS, MAX_PROMPT_CHARS, MAX_TRACKED_SESSIONS }

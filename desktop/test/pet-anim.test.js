@@ -67,7 +67,23 @@ const sandbox = {
   console, Math, Set, Map, JSON, Number, String, Promise, Object,
 }
 sandbox.globalThis = sandbox
-sandbox.window.__dshPet = { resize: async () => {}, moveBy() {}, menu() {}, ask: async () => ({ ok: true }) }
+
+/* preload 的替身。主进程 → 页面那三条走订阅，测试就从订阅口喂进去 —— 直接调
+   window.__dshPetState 只能验调度器，验不到"页面到底有没有把订阅接上"。 */
+const subs = { state: null, play: null, say: null }
+let readyCalls = 0
+sandbox.window.__dshPet = {
+  resize: async () => {}, moveBy() {}, menu() {}, ask: async () => ({ ok: true }),
+  ready: () => { readyCalls++ },
+  onState: (fn) => { subs.state = fn },
+  onPlay: (fn) => { subs.play = fn },
+  onSay: (fn) => { subs.say = fn },
+}
+
+/** 主进程推一个状态过来。 */
+const pushState = (s) => subs.state(s)
+/** 主进程让她插播一条动画。 */
+const pushPlay = (a) => subs.play(a)
 
 // 精灵表替身：不解码 PNG，只把"画了哪条的第几帧"记下来。动画名必须和真素材一致，
 // 否则测试会放过 pet-sprite.js 里写错的名字。
@@ -94,12 +110,14 @@ const check = (name, cond, extra = '') => {
 const at = () => painted.anim + '#' + painted.frame
 
 async function main() {
-  const W = sandbox.window
   // 首帧是在 load() 的 then 里画的 —— 那是个微任务，得先让它排空。
   await new Promise((r) => setImmediate(r))
 
-  console.log('1) 起步就是 idle')
+  console.log('1) 起步就是 idle，并向主进程报到')
   check('首帧画的是 idle', painted.anim === 'idle', at())
+  // 报到晚于素材解码：早报到，主进程推来的首帧状态会落在还没解码完的画布上。
+  check('素材就绪后报到了一次', readyCalls === 1, String(readyCalls))
+  check('三条推送都接上了', subs.state !== null && subs.play !== null && subs.say !== null)
 
   console.log('2) idle 自己会动，一轮眨完停下来')
   const seen = new Set()
@@ -112,14 +130,14 @@ async function main() {
   check('停顿结束继续眨', painted.anim === 'idle', at())
 
   console.log('3) 状态推送映射到底色')
-  W.__dshPetState('running');   check('running → thinking', painted.anim === 'thinking', at())
-  W.__dshPetState('attention'); check('attention → wave', painted.anim === 'wave', at())
-  W.__dshPetState('idle');      check('idle → idle', painted.anim === 'idle', at())
-  W.__dshPetState(undefined);   check('缺状态回落 idle', painted.anim === 'idle', at())
+  pushState('running');   check('running → thinking', painted.anim === 'thinking', at())
+  pushState('attention'); check('attention → wave', painted.anim === 'wave', at())
+  pushState('idle');      check('idle → idle', painted.anim === 'idle', at())
+  pushState(undefined);   check('缺状态回落 idle', painted.anim === 'idle', at())
 
   console.log('4) 一次性动画放一轮就让位')
-  W.__dshPetState('running')
-  W.__dshPetPlay('clap')
+  pushState('running')
+  pushPlay('clap')
   check('插播中是 clap', painted.anim === 'clap', at())
   for (let i = 0; i < 3; i++) advance(170)
   check('第 4 帧仍是 clap', painted.anim === 'clap' && painted.frame === 3, at())
@@ -129,40 +147,40 @@ async function main() {
   check('之后一直是 thinking', painted.anim === 'thinking', at())
 
   console.log('5) 底色没被改过时，插播落回 idle')
-  W.__dshPetState('idle')
-  W.__dshPetPlay('happy')
+  pushState('idle')
+  pushPlay('happy')
   advance(200 * 4)
   check('落回 idle', painted.anim === 'idle', at())
 
   console.log('6) 认不得的名字挡掉')
-  W.__dshPetPlay('nope');            check('乱名字无效', painted.anim === 'idle', at())
-  W.__dshPetPlay('miku-happy.png');  check('文件名无效', painted.anim === 'idle', at())
+  pushPlay('nope');            check('乱名字无效', painted.anim === 'idle', at())
+  pushPlay('miku-happy.png');  check('文件名无效', painted.anim === 'idle', at())
 
   console.log('7) 闲久了打盹，一有动静就醒')
   advance(4 * 60 * 1000 + 1000)
   check('4 分钟后 sleepy', painted.anim === 'sleepy', at())
   advance(2000)
   check('sleepy 在循环', painted.anim === 'sleepy', at())
-  W.__dshPetPlay('happy')
+  pushPlay('happy')
   check('插播把她叫醒', painted.anim === 'happy', at())
   advance(200 * 4)
   check('放完回 idle 而不是接着睡', painted.anim === 'idle', at())
 
   console.log('8) 忙的时候不打盹')
-  W.__dshPetState('running')
+  pushState('running')
   advance(10 * 60 * 1000)
   check('十分钟后仍是 thinking', painted.anim === 'thinking', at())
 
   console.log('9) 重复推同一个状态不打断动画')
   advance(260)
   const f1 = painted.frame
-  W.__dshPetState('running')
+  pushState('running')
   check('帧号没被复位', painted.frame === f1, painted.frame + ' vs ' + f1)
 
   console.log('10) 醒着的状态变化会重置打盹计时')
-  W.__dshPetState('idle')
+  pushState('idle')
   advance(3 * 60 * 1000)
-  W.__dshPetState('idle')            // 同状态，但仍算一次"有动静"
+  pushState('idle')            // 同状态，但仍算一次"有动静"
   advance(3 * 60 * 1000)
   check('累计 6 分钟但没连续 4 分钟 → 还醒着', painted.anim === 'idle', at())
   advance(2 * 60 * 1000)

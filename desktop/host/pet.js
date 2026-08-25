@@ -104,6 +104,22 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
   // 系统发起的移动（比如显示器变更后的重排）仍走事件。
   win.on('moved', schedulePersist)
 
+  /**
+   * 往页面推一条消息。
+   *
+   * 走 IPC 而不是 executeJavaScript 拼字符串：那种写法要把内容（其中包括模型
+   * 吐出来的原话）拼进一段 JS 源码里再送去编译。JSON.stringify 的确挡得住，但
+   * "把别人的输出拼成代码"这件事本身不该是常规通路 —— 何况每弹一次气泡就要多
+   * 编译一次脚本。
+   *
+   * 页面没准备好就丢：窗口刚建出来那几百毫秒里发的消息没有接收方。真正要紧的
+   * 首帧状态由页面自己在就绪时来要（dsh:pet-ready），不依赖这里发得准。
+   */
+  const send = (channel, ...args) => {
+    if (win.isDestroyed()) return
+    win.webContents.send(channel, ...args)
+  }
+
   const showMenu = () => {
     const t = LABELS[getLocale()] ?? LABELS.en
     // 刻意不放"关闭宠物模式"：右键是高频误触区，把宠物弄丢的代价远大于
@@ -153,35 +169,19 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
     },
 
     /** 让宠物说一句话。 */
-    say: (text, ms) => {
-      if (win.isDestroyed()) return
-      void win.webContents.executeJavaScript(
-        `window.__dshPetSay?.(${JSON.stringify(text)}, ${Number(ms) || 4200})`,
-      ).catch(() => { /* 页面还没加载完 */ })
-    },
+    say: (text, ms) => { send('dsh:pet-say', String(text ?? ''), Number(ms) || 4200) },
 
     /**
-     * 插播一次性动画（happy / clap / sad）。
+     * 插播一次性动画。
      *
      * 与 setState 分开：状态是"她现在处于什么情形"，会一直持续；这里是"刚刚发生了
      * 一件事"，放一轮就该回到原样。混成一个通道就得让调用方自己记得复位，而漏掉一
      * 次复位，宠物就永远停在鼓掌上了。
      */
-    play: (anim) => {
-      if (win.isDestroyed()) return
-      void win.webContents.executeJavaScript(
-        `window.__dshPetPlay?.(${JSON.stringify(anim)})`,
-      ).catch(() => { /* 页面还没加载完 */ })
-    },
+    play: (anim) => { send('dsh:pet-play', String(anim ?? '')) },
 
-    /** 推一个状态过去；窗口没了就静默忽略。 */
-    setState: (state) => {
-      if (win.isDestroyed()) return
-      void win.webContents.executeJavaScript(
-        `window.__dshPetState?.(${JSON.stringify(state)})`,
-      ).catch(() => { /* 页面还没加载完 */ })
-    },
-    handleActivate: onActivate,
+    /** 推一个状态过去。 */
+    setState: (state) => { send('dsh:pet-state', String(state ?? 'idle')) },
     handleMenu: showMenu,
     /** 渲染进程的 IPC 要认得出是哪个窗口发来的。 */
     ownsWebContents: (contents) => !win.isDestroyed() && contents === win.webContents,

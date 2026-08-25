@@ -251,8 +251,20 @@
   }
 
   // 素材是异步解码的，加载完再画第一帧 —— 否则首帧是一张空画布。
-  void load().then(() => { draw(); schedule(RATE.idle) })
+  // 画得出来了才报到：主进程收到 ready 就会把当前状态推过来，早报到等于让那一
+  // 帧落在还没解码完的画布上。
+  void load().then(() => {
+    draw()
+    schedule(RATE.idle)
+    window.__dshPet?.ready()
+  })
   scheduleNap()
+
+  // 主进程 → 页面的三条推送。函数体仍挂在 window 上：它们是这个页面的对外接口，
+  // 测试直接调它们来驱动，不必绕一圈假 IPC。
+  window.__dshPet?.onState((s) => { window.__dshPetState(s) })
+  window.__dshPet?.onPlay((a) => { window.__dshPetPlay(a) })
+  window.__dshPet?.onSay((t, ms) => { void window.__dshPetSay(t, ms) })
 
   /**
    * 状态由主进程推送：宠物、托盘、通知看同一份状态，不各自推断。

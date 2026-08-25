@@ -26,4 +26,25 @@ contextBridge.exposeInMainWorld('__dshPet', {
    *   失败原因要能回到页面上说给用户听，不能只在主进程日志里。
    */
   ask: (text) => ipcRenderer.invoke('dsh:pet-ask', text),
+
+  /**
+   * 告诉主进程"素材解码完了，可以画了"。
+   *
+   * 有这一句是因为窗口建出来到页面能接消息之间有几百毫秒，主进程在那期间推的
+   * 首帧状态没有接收方。以前靠 executeJavaScript 的失败回调把它悄悄吞掉，于是
+   * 宠物一开始永远是待机的 —— 哪怕开它的时候智能体正在跑。现在反过来由页面来
+   * 要，什么时候准备好由准备好的那一方说了算。
+   */
+  ready: () => { ipcRenderer.send('dsh:pet-ready') },
+
+  /* 下面三条是主进程 → 页面的单向推送。用 contextBridge 暴露订阅函数而不是让
+     preload 直接去调页面的全局：contextIsolation 开着，两边的 window 不是同一
+     个对象，preload 根本够不着页面里的东西。 */
+
+  /** 订阅"说一句话"。 */
+  onSay: (fn) => { ipcRenderer.on('dsh:pet-say', (_e, text, ms) => { fn(text, ms) }) },
+  /** 订阅"插播一次性动画"。 */
+  onPlay: (fn) => { ipcRenderer.on('dsh:pet-play', (_e, anim) => { fn(anim) }) },
+  /** 订阅状态变化。 */
+  onState: (fn) => { ipcRenderer.on('dsh:pet-state', (_e, state) => { fn(state) }) },
 })
