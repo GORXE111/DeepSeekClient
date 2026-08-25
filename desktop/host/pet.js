@@ -24,14 +24,18 @@ const path = require('node:path')
 /**
  * 三档窗口尺寸。
  *
- * 气泡这一档按**总结**定大小，而不是按一句"忙完啦" —— 宠物现在的主要输出是三四句
- * 话的总结，380x112 只装得下一句，多出来的会被裁掉且毫无提示。
+ * 气泡这一档的高度只是**下限**：真实高度由页面量完文字再报上来（见 resize 的
+ * height 参数）。固定高度两头不讨好 —— 短句子留一大片空白，长总结塞不下就得滚，
+ * 而气泡几秒后自动消失，滚到一半它就没了。
  */
 const BOUNDS = {
   idle: { width: 144, height: 144 },
-  bubble: { width: 480, height: 208 },
+  bubble: { width: 480, height: 144 },
   open: { width: 496, height: 144 },
 }
+
+/** 气泡最高能长到多少。再高就从"桌面上的一句话"变成"一扇挡事的窗口"了。 */
+const MAX_BUBBLE_HEIGHT = 520
 
 const LABELS = {
   zh: { open: '打开主窗口', fresh: '开一个新话题' },
@@ -141,10 +145,28 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
      * focusable 跟着切换：收起时为 false，点它之前你正在做的事不该被打断；
      * 展开时必须为 true，否则输入框拿不到焦点，打不了字。
      */
-    resize: (mode) => {
+    resize: (mode, height) => {
       if (win.isDestroyed()) return
-      const size = BOUNDS[mode] ?? BOUNDS.idle
-      const [x, y] = win.getPosition()
+      const base = BOUNDS[mode] ?? BOUNDS.idle
+      // 页面量出来的高度只对气泡这一档有意义，另外两档的内容是固定的。
+      const wanted = mode === 'bubble' && Number.isFinite(height)
+        ? Math.min(MAX_BUBBLE_HEIGHT, Math.max(base.height, Math.round(height)))
+        : base.height
+      const size = { width: base.width, height: wanted }
+      const old = win.getBounds()
+
+      // 让宠物本人待在原地。她在窗口里是垂直居中的，所以窗口长高时若左上角不动，
+      // 她会跟着往下滑 —— 一边说话一边往下挪，看着像在漏气。补一半高度差回去。
+      let x = old.x
+      let y = old.y + Math.round((old.height - size.height) / 2)
+
+      // 长高之后可能捅出屏幕。按她所在的那块屏的工作区收回来 —— 用主屏会在多显
+      // 示器下把她瞬移到另一块屏上。
+      const { workArea } = screen.getDisplayMatching(old)
+      const maxY = workArea.y + workArea.height - size.height
+      y = Math.max(workArea.y, Math.min(y, maxY))
+      x = Math.max(workArea.x, Math.min(x, workArea.x + workArea.width - size.width))
+
       // 只有展开输入时才可获得焦点：气泡和静默态都不该抢走你正在做的事。
       win.setFocusable(mode === 'open')
       win.setBounds({ x, y, ...size })

@@ -50,15 +50,26 @@ const ctx = { imageSmoothingEnabled: true, clearRect() {}, drawImage() {} }
 const el = () => ({
   addEventListener() {}, focus() {}, style: {}, value: '', textContent: '',
   classList: { add() {}, remove() {}, contains: () => false },
+  // 假的换行模型：每 30 个字一行、行高 22，加上下内边距 20。够用来断言"文字越多
+  // 窗口越高"，不指望它和真实排版一致 —— 那需要一个真排版引擎。
+  getBoundingClientRect() {
+    const len = String(this.textContent).length
+    const lines = Math.max(1, Math.ceil(len / 30))
+    return { height: lines * 22 + 20 }
+  },
 })
 const canvas = { ...el(), getContext: () => ctx, width: 0, height: 0 }
 const nodes = { tank: el(), bubble: el(), panel: el(), input: el(), send: el(), cv: canvas }
 
 const sandbox = {
   document: {
-    body: { classList: { add() {}, remove() {}, contains: () => false } },
+    body: {
+      classList: { add() {}, remove() {}, contains: () => false },
+      appendChild() {},
+    },
     documentElement: { style: { setProperty() {} } },
     getElementById: (id) => nodes[id],
+    createElement: () => el(),
   },
   window: { addEventListener() {} },
   setTimeout: setTimeoutFake,
@@ -71,9 +82,11 @@ sandbox.globalThis = sandbox
 /* preload 的替身。主进程 → 页面那三条走订阅，测试就从订阅口喂进去 —— 直接调
    window.__dshPetState 只能验调度器，验不到"页面到底有没有把订阅接上"。 */
 const subs = { state: null, play: null, say: null }
+const resizes = []
 let readyCalls = 0
 sandbox.window.__dshPet = {
-  resize: async () => {}, moveBy() {}, menu() {}, ask: async () => ({ ok: true }),
+  resize: async (mode, height) => { resizes.push([mode, height]) },
+  moveBy() {}, menu() {}, ask: async () => ({ ok: true }),
   ready: () => { readyCalls++ },
   onState: (fn) => { subs.state = fn },
   onPlay: (fn) => { subs.play = fn },
@@ -84,6 +97,8 @@ sandbox.window.__dshPet = {
 const pushState = (s) => subs.state(s)
 /** 主进程让她插播一条动画。 */
 const pushPlay = (a) => subs.play(a)
+/** 主进程让她说一句话。 */
+const pushSay = (t, ms) => subs.say(t, ms)
 
 // 精灵表替身：不解码 PNG，只把"画了哪条的第几帧"记下来。动画名必须和真素材一致，
 // 否则测试会放过 pet-sprite.js 里写错的名字。
@@ -187,6 +202,26 @@ async function main() {
   check('累计 6 分钟但没连续 4 分钟 → 还醒着', painted.anim === 'idle', at())
   advance(2 * 60 * 1000)
   check('再攒够 4 分钟就睡', painted.anim === 'sleepy', at())
+
+  console.log('11) 气泡按文字定高')
+  {
+    // 固定高度两头不讨好：短句留一大片空白，长总结塞不下就得滚，而气泡几秒后
+    // 自动消失，滚到一半它就没了。
+    resizes.length = 0
+    await pushSay('好', 3000)
+    const short = resizes.find(([m]) => m === 'bubble')
+    check('弹气泡时报了高度', short !== undefined && Number.isFinite(short[1]), JSON.stringify(short))
+
+    resizes.length = 0
+    await pushSay('啊'.repeat(400), 3000)
+    const long = resizes.find(([m]) => m === 'bubble')
+    check('长文要更高的窗口', long[1] > short[1], `${long[1]} vs ${short[1]}`)
+
+    // 收起时不带高度：那一档的内容是固定的，主进程按自己的下限来。
+    resizes.length = 0
+    advance(4000)
+    await new Promise((r) => setImmediate(r))
+  }
 
   console.log()
   console.log(fail === 0 ? `全部通过 ${pass}/${pass}` : `${pass} 通过, ${fail} 失败`)

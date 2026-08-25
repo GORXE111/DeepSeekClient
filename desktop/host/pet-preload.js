@@ -10,8 +10,12 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('__dshPet', {
-  /** 展开/收起时改窗口尺寸。返回 Promise，页面要等它完成再播动画。 */
-  resize: (expanded) => ipcRenderer.invoke('dsh:pet-resize', expanded),
+  /**
+   * 改窗口尺寸。返回 Promise，页面要等它完成再播动画。
+   * @param {'idle'|'bubble'|'open'} mode 三档之一
+   * @param {number} [height] 气泡那一档由页面量出来的高度；另两档忽略
+   */
+  resize: (mode, height) => ipcRenderer.invoke('dsh:pet-resize', mode, height),
   /** 右键菜单必须由主进程绘制，页面画不了原生菜单。 */
   /**
    * 按增量挪窗口。拖拽期间每一帧一条，所以走 send 而不是 invoke —— 不需要回执，

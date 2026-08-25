@@ -506,6 +506,15 @@ if (!app.requestSingleInstanceLock()) {
         })
       }
 
+      /**
+       * 主窗口是不是正被你看着。
+       *
+       * 通知器里也有同一条判断（"窗口有焦点就不打扰"）。这里独立写一份而不是从
+       * 通知器借：那边判断的是要不要发系统通知，这边判断的是要不要弹气泡，两者
+       * 将来完全可能分开演化。
+       */
+      const mainWindowFocused = () => win !== null && !win.isDestroyed() && win.isFocused()
+
       const showMainWindow = () => {
         if (win === null || win.isDestroyed()) return
         if (win.isMinimized()) win.restore()
@@ -694,6 +703,12 @@ if (!app.requestSingleInstanceLock()) {
        */
       const announceBatch = async (digests) => {
         if (pet === undefined) return
+        // 你正看着主窗口，就不用她来转述了 —— 那一轮的输出就在你眼前，气泡只是
+        // 挡住它。仍然鼓个掌：有反馈、不抢注意力，比彻底没反应容易理解。
+        //
+        // 判断放在这里而不是收素材的时候：中间隔着最多十几秒的攒批，那会儿你在
+        // 看哪扇窗口和现在没关系。
+        if (mainWindowFocused()) { pet.play('clap'); return }
         const text = composeAnnouncement(digests, await readNickname(), currentLocale() === 'zh')
         if (text === '') return
         pet.play('clap')
@@ -737,7 +752,7 @@ if (!app.requestSingleInstanceLock()) {
       // 三档模式（idle/bubble/open）原样透传。这里曾经写成 expanded === true 的
       // 布尔判断，于是 'open' 被折成 false，点开之后窗口纹丝不动 —— 而页面那边
       // class 已经加上了，看起来像动画失效，实则是尺寸没跟上。
-      ipcMain.handle('dsh:pet-resize', (_e, mode) => { pet?.resize(String(mode)) })
+      ipcMain.handle('dsh:pet-resize', (_e, mode, height) => { pet?.resize(String(mode), Number(height)) })
       ipcMain.handle('dsh:pet-ask', (_e, text) => petAsk(String(text ?? '')))
       ipcMain.on('dsh:pet-move', (_e, dx, dy) => { pet?.moveBy(Number(dx) || 0, Number(dy) || 0) })
       ipcMain.on('dsh:pet-menu', () => { pet?.handleMenu() })

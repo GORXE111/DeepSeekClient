@@ -282,6 +282,41 @@
   let bubbleTimer
   let open = false
 
+  /* ── 气泡量高 ──────────────────────────────────────────────────────────
+     窗口高度按文字定，不用固定值。固定高度两头不讨好：短句子留一大片空白，长
+     总结塞不下就得滚 —— 而气泡几秒后自动消失，滚到一半它就没了。
+
+     用一把离屏的尺子量，而不是"先撑大窗口再读实际高度"：后者要两次 resize，
+     中间那一帧是撑大了但还没填满的空窗口，闪得很明显。 */
+
+  /** 气泡的外框宽度。跟 CSS 算出来的一致：480 − 8×2 内边距 − 10 间隙 − 128 宠物。 */
+  const BUBBLE_W = 326
+
+  /** body 的上下内边距，量出来的是气泡高度，窗口还要把它算进去。 */
+  const BODY_PAD = 16
+
+  /** 离屏的尺子。带 .bubble 是为了拿到同一套字体、行高、内边距。 */
+  const ruler = document.createElement('div')
+  ruler.className = 'bubble'
+  ruler.style.cssText = [
+    'position:absolute', 'left:-9999px', 'top:0', 'visibility:hidden',
+    // 量的是外框：真气泡在 flex 里分到的 326 也是外框宽。
+    'box-sizing:border-box', `width:${BUBBLE_W}px`,
+    // 这三条要抵消掉 .bubble 上为了做进场动画和限高而加的样式，否则量不准。
+    'max-height:none', 'flex:none', 'opacity:1', 'transform:none', 'transition:none',
+  ].join(';')
+  document.body.appendChild(ruler)
+
+  /**
+   * 这句话要多高的窗口。
+   * @param {string} text 气泡文本
+   * @returns {number} 窗口高度（像素）；不低于宠物本身那么高
+   */
+  const heightFor = (text) => {
+    ruler.textContent = text
+    return Math.ceil(ruler.getBoundingClientRect().height) + BODY_PAD
+  }
+
   /**
    * 弹一句话。展开输入时不弹 —— 那会把输入框挤走，而且用户正在打字。
    * 气泡自动消失：一条永远挂在桌面上的提示很快就变成视觉噪音。
@@ -292,9 +327,33 @@
     clearTimeout(bubbleTimer)
     bubble.textContent = text
     bubble.classList.remove('hidden')
-    await window.__dshPet?.resize('bubble')
-    requestAnimationFrame(() => { body.classList.add('bubbling') })
+    await window.__dshPet?.resize('bubble', heightFor(text))
+    requestAnimationFrame(() => {
+      body.classList.add('bubbling')
+      checkRuler()
+    })
     bubbleTimer = setTimeout(hideBubble, ms)
+  }
+
+  /**
+   * 对一次尺子的宽度。
+   *
+   * BUBBLE_W 是从 CSS 里的几个数算出来的，而那几个数将来会被改 —— 改完这里不会
+   * 报错，只是高度算得不对：短了裁掉一截，长了留一片空白。所以气泡第一次真正显示
+   * 出来之后量一下真身，对不上就喊一声。
+   *
+   * 只查一次：每次都查是白费，而这个值一轮里不会变。
+   */
+  let rulerChecked = false
+  const checkRuler = () => {
+    if (rulerChecked) return
+    rulerChecked = true
+    const real = Math.round(bubble.getBoundingClientRect().width)
+    // 允许一点误差：有的缩放比例下会算出小数。
+    if (Math.abs(real - BUBBLE_W) > 1) {
+      console.warn(`[pet] 气泡尺子宽度对不上：CSS 实际 ${real}，常量 ${BUBBLE_W}。`
+        + '改过 pet.html 的宽度/内边距/间隙就要同步改 BUBBLE_W，否则气泡高度会算错。')
+    }
   }
 
   const hideBubble = () => {
