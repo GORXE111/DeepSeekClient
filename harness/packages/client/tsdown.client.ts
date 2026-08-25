@@ -77,7 +77,30 @@ const GENERATED_REMOTE = /^@deepseek-ai\/dsh-[a-z0-9]+(?:-[a-z0-9]+)*\/remote$/
  */
 const SKIP_WORKSPACE_BUILD: UserConfig = { entry: '' }
 
-const REPOSITORY_ROOT = fileURLToPath(new URL('../..', import.meta.url))
+/**
+ * Repository root, found by walking up to the workspace manifest.
+ *
+ * This used to be `new URL('../..', import.meta.url)` — correct while this file
+ * is loaded as itself, wrong the moment the config is bundled. tsdown's config
+ * loader (unrun) inlines this module into a single artifact and rewrites
+ * `import.meta.url` to the *config's* location, so a path written relative to
+ * `packages/client/` lands two directories above the repository. The glob below
+ * then matches nothing and every workspace lookup fails with "no
+ * packages/*&#47;*&#47;package.json declares the name …", which reads like a missing
+ * package rather than a wrong cwd.
+ *
+ * Anchoring on a file that only the root has removes the dependency on where
+ * this code ends up executing.
+ */
+const REPOSITORY_ROOT = (() => {
+  let dir = fileURLToPath(new URL('.', import.meta.url))
+  for (;;) {
+    if (existsSync(resolvePath(dir, 'pnpm-workspace.yaml'))) return dir
+    const parent = dirname(dir)
+    if (parent === dir) throw new Error('tsdown: no pnpm-workspace.yaml above ' + import.meta.url)
+    dir = parent
+  }
+})()
 
 /** Rebase a physical lib-relative source onto a browser URL that mirrors the repository directories. */
 function browserSourcePath(source: string, sourcemapPath: string): string {

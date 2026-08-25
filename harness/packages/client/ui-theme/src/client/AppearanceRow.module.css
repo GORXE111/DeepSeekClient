@@ -172,3 +172,63 @@
   width: 160px;
   accent-color: var(--dsw-alias-state-business-primary);
 }
+
+/* Wallpaper tile: the image is the whole control, so the frame carries
+ * selection and the remove button rides on top rather than beside it — a row
+ * of tile+button pairs would double the width for an action used once. */
+.wallTile {
+  position: relative;
+  display: inline-flex;
+  width: 44px;
+  height: 32px;
+  border-radius: 6px;
+}
+
+.wallPick {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background-color: var(--dsw-alias-bg-layer-2);
+  background-position: center;
+  background-size: cover;
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2);
+  cursor: pointer;
+}
+
+.wallTileSelected .wallPick {
+  border-color: var(--dsw-alias-state-business-primary);
+  box-shadow: none;
+}
+
+/* Only on hover or keyboard focus: six little crosses sitting permanently over
+ * six thumbnails turn a picker into a delete panel. */
+.wallRemove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  display: none;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-base);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.wallTile:hover .wallRemove,
+.wallRemove:focus-visible {
+  display: grid;
+}
+
+.wallRemove:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}

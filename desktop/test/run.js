@@ -12,7 +12,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 
 const dir = __dirname
-const files = fs.readdirSync(dir).filter((f) => f.endsWith('.test.js')).sort()
+const files = fs.readdirSync(dir).filter((f) => /\.test\.(js|mjs)$/.test(f)).sort()
 
 let failed = 0
 for (const f of files) {

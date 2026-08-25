@@ -140,8 +140,49 @@ export const CHAT_PRESETS: readonly ChatPreset[] = [
 /** Lower strength bound. */
 export const CHAT_OPACITY_MIN = 0.04
 
-/** Upper strength bound; above it the backdrop starts eating message text. */
+/** Upper strength bound for gradients; above it the backdrop eats message text. */
 export const CHAT_OPACITY_MAX = 0.45
+
+/**
+ * Upper strength bound for a wallpaper.
+ *
+ * Higher than a gradient's on purpose. A gradient is a wash of saturated colour
+ * straight under the text, so it costs legibility fast. A photo at the same 45%
+ * is barely a photo any more — the whole point of picking one is to see it. The
+ * text keeps its own ground (bubbles and cards paint over the layer), so the
+ * ceiling that matters here is taste, not contrast.
+ */
+export const WALLPAPER_OPACITY_MAX = 1
+
+/** Prefix marking a backdrop selection that names a stored wallpaper. */
+export const WALLPAPER_PREFIX = 'wallpaper:'
+
+/**
+ * Shell route serving one stored wallpaper. Desktop-only: in a browser the
+ * path falls through to the Host and 404s, which is why the picker hides
+ * itself when the listing request fails.
+ */
+export const WALLPAPER_ROUTE = '/__wallpaper'
+
+/**
+ * The wallpaper id inside a backdrop selection.
+ * @param selection - persisted `chatBackground` value.
+ * @returns the id, or undefined when the selection is not a wallpaper.
+ */
+export function wallpaperId(selection: string): string | undefined {
+  if (!selection.startsWith(WALLPAPER_PREFIX)) return undefined
+  const id = selection.slice(WALLPAPER_PREFIX.length)
+  return /^[0-9a-f]{16}$/.test(id) ? id : undefined
+}
+
+/**
+ * Strength ceiling for one selection.
+ * @param selection - persisted `chatBackground` value.
+ * @returns the maximum the slider may reach.
+ */
+export function maxOpacityFor(selection: string): number {
+  return wallpaperId(selection) === undefined ? CHAT_OPACITY_MAX : WALLPAPER_OPACITY_MAX
+}
 
 /**
  * Build the palette-plus-accent override layer.
@@ -173,6 +214,23 @@ export function buildOverrides(paletteId: string, accent: string): ThemeTokenOve
 }
 
 /**
+ * The `background` shorthand painting one wallpaper.
+ *
+ * `cover` + `center`, no repeat: a photo tiled at its native size reads as a
+ * bug, and one letterboxed inside the column reads as a broken layout. Cropping
+ * is the only fit that stays invisible.
+ *
+ * The id is validated by `wallpaperId` before it reaches here, so it cannot
+ * carry anything that would escape the `url()`.
+ *
+ * @param id - stored wallpaper id.
+ * @returns the CSS `background` value.
+ */
+function wallpaperLayer(id: string): string {
+  return `center / cover no-repeat url('${WALLPAPER_ROUTE}/${id}')`
+}
+
+/**
  * Build the conversation backdrop stylesheet.
  *
  * Anchored on `[data-conversation-backdrop]` — the whole conversation column,
@@ -197,12 +255,15 @@ export function buildOverrides(paletteId: string, accent: string): ThemeTokenOve
  * @returns the stylesheet text, empty when no backdrop is selected.
  */
 export function buildBackdropCss(selection: string, opacity: number): string {
+  const wallpaper = wallpaperId(selection)
   const preset = CHAT_PRESETS.find(entry => entry.id === selection)
+  // 自定义纯色的入口已经从面板上撤掉（换成了壁纸），但读取仍然保留：早先存下的
+  // 那个值不该在升级之后无声地变成"无背景"。
   const custom = HEX.test(selection) ? selection : undefined
-  const light = preset?.light ?? custom
-  const dark = preset?.dark ?? custom
+  const light = wallpaper !== undefined ? wallpaperLayer(wallpaper) : preset?.light ?? custom
+  const dark = wallpaper !== undefined ? wallpaperLayer(wallpaper) : preset?.dark ?? custom
   if (light === undefined || dark === undefined) return ''
-  const strength = Math.min(CHAT_OPACITY_MAX, Math.max(CHAT_OPACITY_MIN, opacity))
+  const strength = Math.min(maxOpacityFor(selection), Math.max(CHAT_OPACITY_MIN, opacity))
 
   return [
     '[data-conversation-backdrop] { position: relative; }',

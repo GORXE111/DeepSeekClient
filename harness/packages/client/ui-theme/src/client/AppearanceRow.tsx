@@ -14,7 +14,8 @@ import type { ThemePreference } from '../theme-settings.ts'
 import type { ThemeKey } from './locales.ts'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { createAppearanceRowStore } from './settings-store.ts'
-import { CHAT_OPACITY_MAX, CHAT_OPACITY_MIN, CHAT_PRESETS, PALETTES } from './palettes.ts'
+import { CHAT_OPACITY_MIN, CHAT_PRESETS, PALETTES, maxOpacityFor } from './palettes.ts'
+import { WallpaperPicker } from './WallpaperPicker.tsx'
 import css from './AppearanceRow.module.css'
 
 /** Injected business face: the preference writes (t rides the standard locale seat). */
@@ -25,7 +26,7 @@ export interface AppearanceRowInjected {
   setPalette: (id: string) => void
   /** Set the custom accent as `#rrggbb`; an empty string follows the palette. */
   setAccent: (accent: string) => void
-  /** Set the conversation backdrop: `none`, a preset id, or a `#rrggbb` colour. */
+  /** Set the conversation backdrop: `none`, a preset id, or `wallpaper:<id>`. */
   setChatBackground: (value: string) => void
   /** Set the conversation backdrop strength. */
   setChatOpacity: (value: number) => void
@@ -61,9 +62,6 @@ export function AppearanceRow({
   const chatOpacity = useStore(s => s.chatOpacity)
 
   const activePalette = PALETTES.find(entry => entry.id === palette)
-  // A stored backdrop that is not a preset id is a custom colour; that is also
-  // what puts the custom swatch in the selected state.
-  const customBackdrop = chatBackground.startsWith('#')
 
   return (
     <div className={css.group}>
@@ -133,17 +131,10 @@ export function AppearanceRow({
             {t(labelKey)}
           </button>
         ))}
-        <span className={clsx(css.chip, customBackdrop && css.chipSelected)}>
-          <input
-            type="color"
-            className={css.colorInput}
-            aria-label={t('chat.custom')}
-            value={customBackdrop ? chatBackground : STOCK_ACCENT}
-            onChange={(event) => { setChatBackground(event.target.value) }}
-          />
-          {t('chat.custom')}
-        </span>
       </div>
+
+      <WallpaperPicker selection={chatBackground} onSelect={setChatBackground} t={t} />
+
       {chatBackground !== 'none' && (
         <div className={css.controlRow}>
           <span className={css.hint}>{t('chat.strength')}</span>
@@ -152,7 +143,9 @@ export function AppearanceRow({
             className={css.slider}
             aria-label={t('chat.strength')}
             min={CHAT_OPACITY_MIN}
-            max={CHAT_OPACITY_MAX}
+            /* A wallpaper may go all the way up; a gradient may not. The two
+             * ceilings differ because the media differ — see maxOpacityFor. */
+            max={maxOpacityFor(chatBackground)}
             step={0.01}
             value={chatOpacity}
             onChange={(event) => { setChatOpacity(Number(event.target.value)) }}

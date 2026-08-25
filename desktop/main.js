@@ -22,6 +22,8 @@ const { createNotifier } = require('./host/notifications.js')
 const { createTray } = require('./host/tray.js')
 const { createPet } = require('./host/pet.js')
 const { localDay, shouldRoll, strayPetSessions } = require('./host/pet-memory.js')
+const { createWallpaperStore, createWallpaperRoutes, ROUTE: WALLPAPER_ROUTE }
+  = require('./host/wallpapers.js')
 const { createPetObserver, textOf } = require('./host/pet-observer.js')
 const { createAnnouncer, composeAnnouncement } = require('./host/pet-announce.js')
 
@@ -66,6 +68,17 @@ const BOOT_TIMEOUT_MS = 120_000
  * 于是两边的历史、工作目录、以及 agent 能碰到的文件都天然分开。
  */
 const PET_WORKSPACE = path.join(app.getPath('home'), '.dsh', 'pet')
+
+/** 聊天背景壁纸库。放 ~/.dsh 下和其余用户数据作伴，卸载时一并带走。 */
+const wallpapers = createWallpaperStore({ dir: path.join(app.getPath('home'), '.dsh', 'wallpapers') })
+
+/**
+ * 壁纸的请求处理器。
+ *
+ * 挂在协议处理器上而不是另开端口，也不另开 IPC：设置面板跑在页面里，页面对这个源
+ * 发的 fetch 本来就落到这儿。同源，不需要任何新的桥。
+ */
+const serveWallpaper = createWallpaperRoutes(wallpapers)
 
 /** @type {import('node:child_process').ChildProcess | null} */
 let harness = null
@@ -219,8 +232,18 @@ const INJECTED = {
  */
 function serveFromPipe() {
   protocol.handle('dsh', async (request) => {
-    if (pipe === null) return new Response('harness 尚未就绪', { status: 503 })
     const url = new URL(request.url)
+
+    // 壁纸归壳自己管，不经管道 —— 也因此不依赖 harness 是否就绪。这条路由排在转发
+    // 之前，所以它吃掉的任何路径，harness 都永远看不到。
+    if (url.pathname === WALLPAPER_ROUTE || url.pathname.startsWith(WALLPAPER_ROUTE + '/')) {
+      try { return await serveWallpaper(request, url) } catch (err) {
+        warnOnce('wallpaper', err)
+        return new Response('壁纸读写失败', { status: 500 })
+      }
+    }
+
+    if (pipe === null) return new Response('harness 尚未就绪', { status: 503 })
 
     // 注入脚本来自本地文件，不经管道。
     const injected = INJECTED[url.pathname]
