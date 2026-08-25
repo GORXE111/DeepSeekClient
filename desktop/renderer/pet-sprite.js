@@ -1,152 +1,79 @@
 'use strict'
 
 /**
- * 像素宠物的绘制器。
+ * 宠物的序列帧绘制器。
  *
- * 做法是把一条鱼**光栅化到一张 32×24 的像素网格上**，再整体放大渲染，而不是
- * 画一张矢量图缩小 —— 后者放大后边缘会被插值糊掉，那就不是像素风了。所有形状
- * 都按整数格子判定，逐帧改尾鳍角度，于是动画是真的一帧一帧换，跟老式电子宠物
- * 一个原理。
+ * 素材是三条横向精灵图（每条 4 帧、单帧 64×64、背景已透明），按状态切换：待机、
+ * 招呼、忙碌。早先那版是用公式把形状算出来的，那条路走不通 —— 公式只会给你"某种
+ * 流线型"，给不了辨识度，所以改为直接贴图。
  *
- * 调色板刻意只有五档：轮廓、主色、暗部、亮部、眼白。像素风的辨识度来自"色少
- * 而边硬"，颜色一多就变成低分辨率的插画，反而两头不靠。
+ * 放大用 `imageSmoothingEnabled = false`。这一句是像素风的命门：默认的双线性插值
+ * 会把硬边糊成渐变，放大之后就不是像素画了。
+ *
+ * 待机**不循环播放**。眨眼是稀疏事件，一直眨看着像抽搐 —— 所以待机长期停在第 0
+ * 帧，由调用方偶尔触发一次完整的四帧眨眼。
  *
  * @module pet-sprite
  */
 
 ;(() => {
 
-/** 逻辑分辨率。改大会更精细，但也更不像素 —— 32×24 是能看清鱼形的下限附近。 */
-const W = 32
-const H = 24
+/** 单帧的边长。素材是 4×4 的 256×256 表，切成三条 256×64 的横条。 */
+const FRAME = 64
 
-/** 调色板索引。0 是透明，画的时候跳过。 */
-const T = 0, OUTLINE = 1, BODY = 2, SHADE = 3, LIGHT = 4, WHITE = 5
+/** 每条动画的帧数。 */
+const FRAMES = 4
 
 /**
- * 按状态取一组颜色。轮廓永远是同一档深色 —— 让轮廓跟着主色变的话，深色主题下
- * 鱼会糊进背景里。
+ * 状态到素材的映射。键就是主进程推过来的状态名 —— 多一层转换只会多一个出错的
+ * 地方。
  */
-function palette(accent) {
-  return {
-    [OUTLINE]: '#10131a',
-    [BODY]: accent,
-    [SHADE]: mix(accent, '#000000', 0.34),
-    [LIGHT]: mix(accent, '#ffffff', 0.42),
-    [WHITE]: '#f2f5fa',
-  }
+const SHEETS = {
+  idle: 'assets/miku-idle.png',
+  attention: 'assets/miku-call.png',
+  running: 'assets/miku-busy.png',
 }
 
-function mix(hex, other, amount) {
-  const a = parseInt(hex.slice(1), 16)
-  const b = parseInt(other.slice(1), 16)
-  const ch = (shift) => {
-    const x = (a >> shift) & 255
-    const y = (b >> shift) & 255
-    return Math.round(x + (y - x) * amount)
-  }
-  return `#${((1 << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).slice(1)}`
+/** 已解码的图片，按状态存。 */
+const images = new Map()
+
+/** 全部素材就绪后置为 true；在此之前 draw 什么也不画，免得闪半张图。 */
+let ready = false
+
+/**
+ * 预加载三条精灵图。
+ * @returns {Promise<void>} 全部就绪后兑现；单张失败不阻塞其余，只是那个状态没图。
+ */
+function load() {
+  const one = (state, src) => new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => { images.set(state, img); resolve() }
+    // 少一张就少一个状态的动画，不该让整只宠物起不来。
+    img.onerror = () => { console.error('[pet] 素材加载失败:', src); resolve() }
+    img.src = src
+  })
+  return Promise.all(Object.entries(SHEETS).map(([state, src]) => one(state, src)))
+    .then(() => { ready = true })
 }
 
 /**
  * 画一帧。
  *
- * @param {number} frame 帧序号，决定尾鳍张合与鳍的相位
- * @param {{blink: boolean}} opts
- * @returns {Uint8Array} 长度 W*H 的调色板索引
+ * @param {CanvasRenderingContext2D} ctx 目标画布
+ * @param {string} state 状态名；未知状态回落到待机
+ * @param {number} frame 帧序号，内部对帧数取模
+ * @param {number} scale 整数放大倍数
  */
-function renderFrame(frame, { blink = false } = {}) {
-  const px = new Uint8Array(W * H)
-  const set = (x, y, v) => {
-    if (x < 0 || y < 0 || x >= W || y >= H) return
-    px[y * W + x] = v
-  }
-  const get = (x, y) => (x < 0 || y < 0 || x >= W || y >= H ? T : px[y * W + x])
-
-  // 身体：一个椭圆。整数判定，所以边缘自然是阶梯状 —— 那正是要的。
-  const cx = 13, cy = 12, rx = 9, ry = 6
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const dx = (x - cx) / rx
-      const dy = (y - cy) / ry
-      if (dx * dx + dy * dy <= 1) set(x, y, BODY)
-    }
-  }
-
-  // 腹部亮面：同心但下移、更扁。
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const dx = (x - cx + 1) / (rx - 2)
-      const dy = (y - cy - 2.2) / (ry - 3)
-      if (dx * dx + dy * dy <= 1) set(x, y, LIGHT)
-    }
-  }
-  // 背部暗面：上移，压一条窄带。
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const dx = (x - cx) / (rx - 2)
-      const dy = (y - cy + 3.4) / 1.6
-      if (dx * dx + dy * dy <= 1 && get(x, y) === BODY) set(x, y, SHADE)
-    }
-  }
-
-  // 尾鳍：三角形，张合幅度按帧走。四帧一循环，闭-半-张-半。
-  const spread = [2, 4, 6, 4][frame % 4]
-  for (let i = 0; i < 7; i++) {
-    const x = cx + rx - 1 + i
-    const half = Math.round((i / 6) * spread) + 1
-    for (let dy = -half; dy <= half; dy++) set(x, cy + dy, i > 4 ? SHADE : BODY)
-  }
-
-  // 背鳍：跟着尾巴反相摆，幅度小。
-  const finLift = [0, 1, 1, 0][frame % 4]
-  for (let i = 0; i < 5; i++) {
-    const x = cx - 2 + i
-    const top = cy - ry - finLift - (i < 3 ? i : 4 - i)
-    for (let y = top; y < cy - ry + 1; y++) set(x, y, SHADE)
-  }
-
-  // 眼睛：白底 + 瞳孔。眨眼时压成一条线。
-  if (blink) {
-    for (let i = 0; i < 3; i++) set(cx - 5 + i, cy - 1, OUTLINE)
-  } else {
-    for (let y = cy - 3; y <= cy; y++) {
-      for (let x = cx - 6; x <= cx - 3; x++) set(x, y, WHITE)
-    }
-    set(cx - 4, cy - 2, OUTLINE)
-    set(cx - 4, cy - 1, OUTLINE)
-    set(cx - 5, cy - 2, OUTLINE)
-  }
-
-  // 描边：任何非透明像素，若四邻有透明，就在那个透明格子上落一笔轮廓。
-  // 先收集再落笔，否则新画的轮廓会被当成实体继续外扩，鱼会一圈圈胖起来。
-  const edge = []
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      if (get(x, y) !== T) continue
-      if (get(x - 1, y) !== T || get(x + 1, y) !== T || get(x, y - 1) !== T || get(x, y + 1) !== T) {
-        edge.push([x, y])
-      }
-    }
-  }
-  for (const [x, y] of edge) set(x, y, OUTLINE)
-
-  return px
+function draw(ctx, state, frame, scale) {
+  if (!ready) return
+  const img = images.get(state) ?? images.get('idle')
+  if (img === undefined) return
+  const size = FRAME * scale
+  ctx.imageSmoothingEnabled = false
+  ctx.clearRect(0, 0, size, size)
+  const col = ((frame % FRAMES) + FRAMES) % FRAMES
+  ctx.drawImage(img, col * FRAME, 0, FRAME, FRAME, 0, 0, size, size)
 }
 
-/** 把一帧画到 canvas 上。canvas 的像素尺寸必须是 W*scale × H*scale。 */
-function paint(ctx, px, accent, scale) {
-  const colors = palette(accent)
-  ctx.clearRect(0, 0, W * scale, H * scale)
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const v = px[y * W + x]
-      if (v === T) continue
-      ctx.fillStyle = colors[v]
-      ctx.fillRect(x * scale, y * scale, scale, scale)
-    }
-  }
-}
-
-globalThis.__dshSprite = { W, H, renderFrame, paint }
+globalThis.__dshSprite = { FRAME, FRAMES, load, draw }
 })()

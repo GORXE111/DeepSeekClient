@@ -24,13 +24,13 @@ const path = require('node:path')
 /**
  * 三档窗口尺寸。
  *
- * 气泡这一档按**总结**定大小，而不是按一句"忙完啦" —— 鱼现在的主要输出是三四句
+ * 气泡这一档按**总结**定大小，而不是按一句"忙完啦" —— 宠物现在的主要输出是三四句
  * 话的总结，380x112 只装得下一句，多出来的会被裁掉且毫无提示。
  */
 const BOUNDS = {
-  idle: { width: 144, height: 112 },
-  bubble: { width: 460, height: 188 },
-  open: { width: 480, height: 112 },
+  idle: { width: 144, height: 144 },
+  bubble: { width: 480, height: 208 },
+  open: { width: 496, height: 144 },
 }
 
 const LABELS = {
@@ -90,7 +90,7 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
    *
    * 必须由移动本身驱动，不能只挂 `moved` 事件 —— Windows 上程序化的
    * `setPosition` **不发** `moved`，而自绘拖拽全靠 setPosition。只听事件的话，
-   * 拖到哪里都不会记住，重启后鱼弹回原处，而且过程里没有任何报错。
+   * 拖到哪里都不会记住，重启后宠物弹回原处，而且过程里没有任何报错。
    */
   let persistTimer
   const schedulePersist = () => {
@@ -143,7 +143,7 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
      * 己算，收益是拖拽期间的表现完全归页面管。
      *
      * 收增量而不是绝对坐标：窗口在拖动中不断移动，页面若用窗口内坐标推算目标位
-     * 置，每一帧都会和上一帧的移动叠加，鱼会自己飞走。
+     * 置，每一帧都会和上一帧的移动叠加，宠物会自己飞走。
      */
     moveBy: (dx, dy) => {
       if (win.isDestroyed()) return
@@ -152,7 +152,7 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
       schedulePersist()
     },
 
-    /** 让鱼说一句话。 */
+    /** 让宠物说一句话。 */
     say: (text, ms) => {
       if (win.isDestroyed()) return
       void win.webContents.executeJavaScript(

@@ -63,8 +63,8 @@ function createNotifier({ getWindow, getLocale, onState, onSay }) {
   }
 
   const notify = (kind, arg) => {
-    // 鱼不受"窗口有焦点就闭嘴"的约束：人就在屏幕前时，系统通知反而容易被
-    // 忽略，桌面上一条鱼开口说话是更合适的提醒方式。
+    // 宠物不受"窗口有焦点就闭嘴"的约束：人就在屏幕前时，系统通知反而容易被
+    // 忽略，桌面角落有个小人开口说话是更合适的提醒方式。
     onSay?.(kind, arg)
     if (focused()) return
     if (!Notification.isSupported()) return

@@ -20,6 +20,15 @@ dist/        产物：安装包（不入库）
 的 `dsh-v0.1.1-rc.2`（MIT），在其上带三处本仓库的改动：外观设置、中文输入法预编辑
 修复、以及 Windows 上的 lefthook 安装修复。
 
+## 桌面宠物
+
+桌面角落常驻一个像素小人（默认关闭，视图菜单里开）：智能体干完一轮它会来报一声、
+点开可以直接问小问题、按住能拖着走。称呼你的昵称在 设置 → 通用设置 → 桌面宠物。
+
+形象为初音未来，版权属 Crypton Future Media, INC.，按 **CC BY-NC**（署名 — 非商业）
+使用。**本项目转为商业分发前必须另行取得 Crypton 许可，或换掉这套形象。**
+详见 [desktop/renderer/assets/README.md](desktop/renderer/assets/README.md)。
+
 ## 从源码构建
 
 需要 Node 24 以上（`pnpm` 由 `npx` 拉起，不必预装）。

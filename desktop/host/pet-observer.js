@@ -3,19 +3,19 @@
 /**
  * 旁观其他会话，攒出一份"刚才发生了什么"。
  *
- * 鱼不是聊天对象，而是**旁观者**：你和主界面的智能体干活，它在一边看着，等那边收
+ * 宠物不是聊天对象，而是**旁观者**：你和主界面的智能体干活，它在一边看着，等那边收
  * 工再用自己的话总结一波。所以这里只做一件事 —— 把一轮对话压成一份摘要素材，交给
- * 调用方去问鱼。
+ * 调用方去问宠物。
  *
  * 只认最终消息，不认流式分片：`assistant/chunk` 一轮能有上百条，攒起来既费内存又
  * 会把同一段话重复计入，而 `assistant/message` 是同一内容的定稿。
  *
  * 收工的判据是 `turn/end`，**不是** `host/session-status` 的 running=false。后者走
  * 另一条流，实测会跑在 `assistant/message` 前面 —— 用它触发，摘要里的回答永远是
- * 空的，而鱼会一本正经地报告"那位智能体一个字没吐"。
+ * 空的，而宠物会一本正经地报告"那位智能体一个字没吐"。
  *
  * 推理段（`reasoning`）一律丢掉。那是模型的草稿，既不是给人看的，也不该成为另一个
- * 模型总结的输入 —— 让鱼去转述别人的思考过程，只会得到一段更含糊的思考过程。
+ * 模型总结的输入 —— 让宠物去转述别人的思考过程，只会得到一段更含糊的思考过程。
  *
  * @module pet-observer
  */
@@ -44,7 +44,7 @@ function textOf(content) {
  * 建一个旁观器。
  *
  * @param {object} deps
- * @param {(sessionId: string) => boolean} deps.isPetSession 判断某个会话是不是鱼自己的
+ * @param {(sessionId: string) => boolean} deps.isPetSession 判断某个会话是不是宠物自己的
  * @param {(digest: {sessionId: string, prompt: string, answer: string, tools: number}) => void} deps.onDigest
  *   一轮结束且确实有内容时回调
  */
@@ -74,7 +74,7 @@ function createPetObserver({ isPetSession, onDigest }) {
       const sessionId = frame.sessionId
       const event = frame.event
       if (typeof sessionId !== 'string' || event === null || typeof event !== 'object') return
-      // 鱼自己那条会话不进素材：它说的话是**结果**，再喂回去就成了自己总结自己。
+      // 宠物自己那条会话不进素材：它说的话是**结果**，再喂回去就成了自己总结自己。
       if (isPetSession(sessionId)) return
 
       switch (event.type) {

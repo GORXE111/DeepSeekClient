@@ -15,7 +15,7 @@ contextBridge.exposeInMainWorld('__dshPet', {
   /** 右键菜单必须由主进程绘制，页面画不了原生菜单。 */
   /**
    * 按增量挪窗口。拖拽期间每一帧一条，所以走 send 而不是 invoke —— 不需要回执，
-   * 而等待回执会把移动压在 IPC 往返上，鱼跟不上光标。
+   * 而等待回执会把移动压在 IPC 往返上，宠物跟不上光标。
    */
   moveBy: (dx, dy) => { ipcRenderer.send('dsh:pet-move', dx, dy) },
 

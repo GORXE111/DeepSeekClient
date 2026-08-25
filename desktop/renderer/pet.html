@@ -5,7 +5,7 @@
 <title>DeepSeek Client</title>
 <style>
   /* 像素宠物。
-     鱼是逐帧光栅化到 32×24 网格上再整体放大的（见 pet-sprite.js），不是矢量图
+     宠物是逐帧光栅化到 32×24 网格上再整体放大的（见 pet-sprite.js），不是矢量图
      缩放 —— 后者放大后边缘会被插值糊掉，那就不是像素风了。
 
      窗口尺寸永远贴着可见内容（三档：静默 / 冒泡 / 展开）。透明区域一样会拦住
@@ -25,10 +25,10 @@
 
   .tank {
     flex: none; align-self: center; position: relative;
-    width: 128px; height: 96px;
+    width: 128px; height: 128px;
     cursor: pointer;
     -webkit-app-region: no-drag;
-    /* 整体上下浮动。这一层是 CSS，因为"鱼在水里飘"是位移而不是形变 ——
+    /* 整体上下浮动。这一层是 CSS，因为"宠物在水里飘"是位移而不是形变 ——
        把它也做进逐帧里会让每帧都要重画一遍位置，白费。 */
     animation: bob 3.4s ease-in-out infinite;
   }
@@ -72,7 +72,7 @@
     transform-origin: left center;
     transition: opacity 160ms ease, transform 200ms cubic-bezier(.2,.9,.3,1.25);
   }
-  /* 气泡也走像素风：直角 + 硬边描边，圆角会和鱼打架。 */
+  /* 气泡也走像素风：直角 + 硬边描边，圆角会和宠物打架。 */
   .bubble {
     /* 总结可能长过气泡：让它滚而不是裁掉。裁掉是无声的信息丢失，滚动至少
        让人知道下面还有。 */
@@ -126,7 +126,9 @@
 <script src="./pet-sprite.js"></script>
 <script>
   const ACCENT = { idle: '#6f9bd1', running: '#5b7cff', attention: '#e0902b' }
-  const SCALE = 4
+  // 单帧 64px，放大 2 倍到 128px 显示。CSS 尺寸必须与 canvas 像素尺寸一致 ——
+  // 不一致时浏览器会再缩放一次，把刚放大的硬边重新插值糊掉。
+  const SCALE = 2
 
   const body = document.body
   const tank = document.getElementById('tank')
@@ -137,27 +139,38 @@
   const cv = document.getElementById('cv')
   const ctx = cv.getContext('2d')
 
-  const { W, H, renderFrame, paint } = globalThis.__dshSprite
-  cv.width = W * SCALE
-  cv.height = H * SCALE
+  const { FRAME, FRAMES, load, draw: drawSprite } = globalThis.__dshSprite
+  cv.width = FRAME * SCALE
+  cv.height = FRAME * SCALE
 
   let accent = ACCENT.idle
   let frame = 0
   let open = false
   let bubbleTimer
 
+  /** 最近一次状态。拖拽结束要靠它把节奏还原，不能一律回到待机。 */
+  let state = 'idle'
+
+  /** 待机时是否正在播眨眼那一段。 */
+  let blinking = false
+
+  const draw = () => { drawSprite(ctx, state, frame, SCALE) }
+
   /**
    * 帧循环。
    *
-   * 用固定间隔换帧而不是 requestAnimationFrame：像素动画的味道恰恰来自"帧率低
-   * 且稳定"，跟着显示器刷新率跑反而会显得滑，那是矢量动画的质感。
+   * 用固定间隔换帧而不是 requestAnimationFrame：像素动画的味道恰恰来自"帧率低而
+   * 稳定"，跟着显示器刷新率跑反而会显得滑，那是矢量动画的质感。
    *
-   * 眨眼不进帧循环，它是稀疏事件 —— 混进四帧循环里会变成规律抽搐。
+   * 待机**不**一直循环。素材第一行是眨眼，连着播就成了规律抽搐 —— 所以待机长期
+   * 停在第 0 帧，由 scheduleBlink 偶尔放一次完整的四帧。
    */
-  let blink = false
   const tick = () => {
-    frame = (frame + 1) % 4
-    paint(ctx, renderFrame(frame, { blink }), accent, SCALE)
+    if (state === 'idle' && !blinking) { frame = 0; draw(); return }
+    frame = (frame + 1) % FRAMES
+    draw()
+    // 一轮眨眼放完就停回第 0 帧等下一次。
+    if (blinking && frame === 0) blinking = false
   }
   let timer = setInterval(tick, 220)
 
@@ -165,30 +178,34 @@
 
   const scheduleBlink = () => {
     setTimeout(() => {
-      blink = true
-      paint(ctx, renderFrame(frame, { blink }), accent, SCALE)
-      setTimeout(() => { blink = false; scheduleBlink() }, 120)
-    }, 2600 + Math.random() * 4200)
+      // 只有待机才眨：忙碌和招呼那两条本身就在循环，插一段眨眼会打断它们。
+      if (state === 'idle' && !open) { blinking = true; frame = 0 }
+      scheduleBlink()
+    }, 3200 + Math.random() * 4600)
   }
+
   scheduleBlink()
-  tick()
+  // 素材是异步解码的，加载完再画第一帧 —— 否则首帧是一张空画布。
+  void load().then(draw)
 
-  /** 状态由主进程推送：鱼、托盘、通知看同一份状态，不各自推断。 */
-  /** 忙的时候游得快，等人的时候几乎不动 —— 帧率本身就是状态的一部分。 */
-  const rateFor = (s) => (s === 'running' ? 110 : s === 'attention' ? 420 : 220)
-
-  /** 最近一次状态。拖拽结束要靠它把帧率还原，不能一律回到静默。 */
-  let state = 'idle'
+  /**
+   * 状态由主进程推送：宠物、托盘、通知看同一份状态，不各自推断。
+   *
+   * 帧率也是状态的一部分：忙的时候动得快，等人处理时慢而明显，待机几乎不动。
+   */
+  const rateFor = (s) => (s === 'running' ? 160 : s === 'attention' ? 300 : 220)
 
   window.__dshPetState = (next) => {
     state = next ?? 'idle'
+    blinking = false
+    frame = 0
     accent = ACCENT[state] ?? ACCENT.idle
     document.documentElement.style.setProperty('--accent', accent)
     body.classList.remove('state-idle', 'state-running', 'state-attention')
     body.classList.add(`state-${state}`)
-    // 拖拽中的帧率归拖拽管，状态推送不该把它抢回去。
+    // 拖拽中的节奏归拖拽管，状态推送不该把它抢回去。
     if (drag === null) retime(rateFor(state))
-    tick()
+    draw()
   }
 
   /**
@@ -240,16 +257,16 @@
   }
 
   /**
-   * 按住鱼拖动。
+   * 按住宠物拖动。
    *
    * 自绘而不是交给 `-webkit-app-region: drag`：系统拖拽会把鼠标事件整个吞掉，页面
    * 因此不知道自己正被拖，也就播不了挣扎动画。
    *
    * 用指针捕获而不是在 window 上听 mousemove：拖动中光标经常跑到这个小窗口之外，
-   * 没有捕获就会中途断流，鱼卡在半路。
+   * 没有捕获就会中途断流，宠物卡在半路。
    *
    * 传增量而不是绝对坐标：窗口本身在跟着移动，用窗口内坐标推算目标位置会和上一帧
-   * 的位移叠加，鱼会自己飞出屏幕。
+   * 的位移叠加，宠物会自己飞出屏幕。
    */
   const DRAG_SLOP = 4
   let drag = null

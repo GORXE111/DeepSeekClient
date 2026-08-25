@@ -86,10 +86,10 @@ let pet
 let agentState = 'idle'
 
 /**
- * 每一帧也交给鱼一份。
+ * 每一帧也交给宠物一份。
  *
- * 帧处理器注册在更外层，拿不到鱼那一块里的闭包，所以留一个模块级钩子由那边填。
- * 默认是空函数：鱼没开时这条路径什么也不做，调用点不必判空。
+ * 帧处理器注册在更外层，拿不到宠物那一块里的闭包，所以留一个模块级钩子由那边填。
+ * 默认是空函数：宠物没开时这条路径什么也不做，调用点不必判空。
  */
 let onPetFrame = () => {}
 
@@ -291,7 +291,7 @@ function registerBridge() {
         // 放在转发之后 —— 界面拿到数据的时机不该被通知逻辑拖慢。
         try { notifier?.observe(text) } catch { /* 通知是附加价值，不能影响载体 */ }
         // 坏一帧不能影响载体，但也不能连编程错误一起咽掉 —— 这里曾经吞掉一个
-        // 每帧都抛的 ReferenceError，症状是"鱼再也不说话了"，而日志干干净净。
+        // 每帧都抛的 ReferenceError，症状是"宠物再也不说话了"，而日志干干净净。
         try { onPetFrame(text) } catch (err) { warnOnce('pet-frame', err) }
       },
       onClose: () => { streams.delete(id); send('dsh:stream-close') },
@@ -431,7 +431,7 @@ if (!app.requestSingleInstanceLock()) {
         getLocale: currentLocale,
         onState: (state) => { agentState = state; tray?.setState(state); pet?.setState(state) },
         onSay: (kind, detail) => {
-          // 'done' 刻意不在这里说话：干完一轮之后鱼要说的是**总结**，那由旁观器
+          // 'done' 刻意不在这里说话：干完一轮之后宠物要说的是**总结**，那由旁观器
           // 触发（见 petObserver）。这里再喊一句"忙完啦"，只会抢在总结前面把气泡
           // 占掉，然后被总结顶掉 —— 两句话打架，哪句都没看清。
           if (kind === 'done') return
@@ -486,7 +486,7 @@ if (!app.requestSingleInstanceLock()) {
         pet.setState(agentState)
       }
       /**
-       * 把一段话交给鱼的会话。
+       * 把一段话交给宠物的会话。
        *
        * 用户直接问、以及旁观到一轮结束后请它总结，走的是**同一条会话** —— 这样
        * "第二点展开说说"这种追问才接得上，不必在两个面上来回切。
@@ -494,7 +494,7 @@ if (!app.requestSingleInstanceLock()) {
        * 会话用 `pet` 预设：那份人设定义了它是谁、怎么说话、以及它没有任何工具。
        * 工作目录仍指向 ~/.dsh/pet，与主界面的项目隔开。
        *
-       * 不登记可见工作区：鱼是旁观者而不是一个项目，在侧边栏占一栏只是噪音。
+       * 不登记可见工作区：宠物是旁观者而不是一个项目，在侧边栏占一栏只是噪音。
        *
        * 失败原因原样回给调用方 —— 悄悄吞掉的话，用户只会觉得"我发了但什么都没
        * 发生"，那比报错更糟。
@@ -513,7 +513,7 @@ if (!app.requestSingleInstanceLock()) {
       }
 
       /**
-       * 读用户给鱼定的昵称（设置 → 通用设置）。
+       * 读用户给宠物定的昵称（设置 → 通用设置）。
        *
        * 读不到就返回空串，届时不称呼 —— 编一个占位（"用户""你好"）比不称呼更糟。
        */
@@ -531,7 +531,7 @@ if (!app.requestSingleInstanceLock()) {
         try {
           // 目录得是真的：session.create 拿 cwd 去登记，路径不存在会被拒。
           fs.mkdirSync(PET_WORKSPACE, { recursive: true })
-          // 跨天就翻篇。判断放在发送前而不是定时器里：鱼大多数时候没人理，定时器
+          // 跨天就翻篇。判断放在发送前而不是定时器里：宠物大多数时候没人理，定时器
           // 只会在无人使用时空转，而真正要紧的是"今天第一次说话"这一刻。
           const today = localDay()
           const rolled = shouldRoll(petSession, today)
@@ -545,7 +545,7 @@ if (!app.requestSingleInstanceLock()) {
             petSession = created === null ? null : { id: created, day: today, greeted: false }
           }
           const sessionId = petSession?.id ?? null
-          if (sessionId === null) return { ok: false, error: '没能建立鱼的会话' }
+          if (sessionId === null) return { ok: false, error: '没能建立宠物的会话' }
 
           // 昵称只在一条会话的**第一句**里交代一次。人设是静态的，读不到设置；每条
           // 都带上则是把同一句话反复塞进上下文，既费 token 又显得啰嗦。
@@ -566,7 +566,7 @@ if (!app.requestSingleInstanceLock()) {
             content: [{ type: 'text', text: outgoing }],
           })
           if (rolled) {
-            // 忘掉这件事必须让人知道：否则鱼会显得莫名其妙地不记得昨天说过的话。
+            // 忘掉这件事必须让人知道：否则宠物会显得莫名其妙地不记得昨天说过的话。
             pet?.say(currentLocale() === 'zh' ? '新的一天，昨天的事我忘啦' : 'New day — yesterday is gone', 3600)
           }
           return { ok: true }
@@ -579,9 +579,9 @@ if (!app.requestSingleInstanceLock()) {
       const petAsk = (text) => petPrompt(text)
 
       /**
-       * 别的智能体干完一轮，鱼过来报一声。
+       * 别的智能体干完一轮，宠物过来报一声。
        *
-       * 这条**不经过模型**。早先的做法是把那一轮的问答喂给鱼，让它用自己的话总结，
+       * 这条**不经过模型**。早先的做法是把那一轮的问答喂给宠物，让它用自己的话总结，
        * 结果是总结与实际不符 —— 一个小模型隔着一份被截断的素材去转述另一个模型的
        * 工作，说错是常态而不是意外，而说错的代价是你以为任务成了。
        *
@@ -602,7 +602,7 @@ if (!app.requestSingleInstanceLock()) {
       }
 
       /**
-       * 鱼自己说的话进气泡。
+       * 宠物自己说的话进气泡。
        *
        * 停留时长按字数给：一句"好"挂十几秒是碍事，三行总结给四秒又读不完。
        */
@@ -620,7 +620,7 @@ if (!app.requestSingleInstanceLock()) {
       const petObserver = createPetObserver({
         isPetSession: (id) => petSession?.id === id,
         onDigest: (digest) => {
-          // 鱼没开就没人看，不必费事。
+          // 宠物没开就没人看，不必费事。
           if (pet === undefined) return
           void announceDone(digest)
         },
