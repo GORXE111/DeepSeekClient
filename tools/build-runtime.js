@@ -117,15 +117,25 @@ function completeClosure() {
   // 启动时才报错。
   const SPECIFIER = /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]/g
 
+  // 组合文件里的插件按包名点名，没有任何 import 或 dependencies 指向它们 ——
+  // 只扫代码会整包漏掉，而症状是启动时报"找不到包"。
+  const PLUGIN_NAME = /@deepseek-ai\/[a-z0-9][a-z0-9._-]*/g
+
   const scanSources = (dir, into, depth = 0) => {
     if (depth > 4 || !fs.existsSync(dir)) return
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === 'node_modules') continue
       const child = path.join(dir, entry.name)
       if (entry.isDirectory()) { scanSources(child, into, depth + 1); continue }
-      if (!entry.name.endsWith('.js') && !entry.name.endsWith('.mjs')) continue
+      const code = entry.name.endsWith('.js') || entry.name.endsWith('.mjs')
+      const composition = entry.name.endsWith('.yml') || entry.name.endsWith('.yaml')
+      if (!code && !composition) continue
       let text
       try { text = fs.readFileSync(child, 'utf8') } catch { continue }
+      if (composition) {
+        for (const match of text.matchAll(PLUGIN_NAME)) into.add(match[0])
+        continue
+      }
       for (const match of text.matchAll(SPECIFIER)) {
         const name = packageOf(match[1])
         if (name !== undefined) into.add(name)
@@ -149,6 +159,14 @@ function completeClosure() {
       // 只扫我们自己工作区的包：第三方依赖由 deploy 正常解析，扫它们既慢又会
       // 把可选依赖误报成缺失。
       scanSources(path.join(pkgDir, 'lib'), required)
+      // 组合文件躺在包根目录（cordis.patch.yml / cordis.yml），不在 lib/ 下。
+      for (const entry of fs.readdirSync(pkgDir, { withFileTypes: true })) {
+        if (!entry.isFile()) continue
+        if (!entry.name.endsWith('.yml') && !entry.name.endsWith('.yaml')) continue
+        let text
+        try { text = fs.readFileSync(path.join(pkgDir, entry.name), 'utf8') } catch { continue }
+        for (const match of text.matchAll(PLUGIN_NAME)) required.add(match[0])
+      }
     }
     for (const scope of fs.readdirSync(modules, { withFileTypes: true })) {
       if (!scope.isDirectory() || scope.name.startsWith('.')) continue

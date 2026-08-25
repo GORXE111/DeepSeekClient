@@ -284,6 +284,12 @@
     - id: ui-settings-plugins
       name: '@deepseek-ai/dsh-client-ui-settings-plugins'
 
+    # MCP servers: owns the durable mcp-servers section and mounts one MCP client
+    # per enabled entry, so servers can be added from the product instead of only
+    # from cordis.yml.
+    - id: ui-settings-mcp
+      name: '@deepseek-ai/dsh-client-ui-settings-mcp'
+
     # Plan control: the composer plan seat over the plan projection + /plan channel.
     - id: ui-plan
       name: '@deepseek-ai/dsh-client-ui-plan'

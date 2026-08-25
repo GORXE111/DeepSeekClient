@@ -1,0 +1,132 @@
+/* MCP server card. The surrounding tab renders cards as list items, so the
+   card owns its own surface and spacing rather than a wrapper. */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-1);
+  list-style: none;
+}
+
+.title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.description,
+.empty,
+.hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.warning {
+  margin: 0;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One server per row; it wraps rather than scrolls, so a narrow panel stacks
+   the fields instead of hiding the remove button past an edge. */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  white-space: nowrap;
+}
+
+.name,
+.transport,
+.target,
+.wideTarget {
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-base);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.name { flex: 0 1 120px; min-width: 90px; }
+.transport { flex: none; }
+.target { flex: 1 1 130px; min-width: 110px; }
+.wideTarget { flex: 1 1 280px; min-width: 160px; }
+
+.name:disabled,
+.transport:disabled,
+.target:disabled,
+.wideTarget:disabled {
+  color: var(--dsw-alias-label-dimmed);
+}
+
+.add,
+.remove {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.add:hover:not(:disabled),
+.remove:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.add:disabled,
+.remove:disabled {
+  color: var(--dsw-alias-label-dimmed);
+  cursor: default;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* A row-level warning claims the whole width so it reads as being about the
+   row, not about the field it happens to follow. */
+.row .warning {
+  flex: 1 0 100%;
+}
