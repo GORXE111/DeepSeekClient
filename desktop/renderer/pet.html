@@ -5,8 +5,8 @@
 <title>DeepSeek Client</title>
 <style>
   /* 像素宠物。
-     宠物是逐帧光栅化到 32×24 网格上再整体放大的（见 pet-sprite.js），不是矢量图
-     缩放 —— 后者放大后边缘会被插值糊掉，那就不是像素风了。
+     宠物是 64×64 的序列帧整数放大的（见 pet-sprite.js），不是矢量图缩放 ——
+     后者放大后边缘会被插值糊掉，那就不是像素风了。
 
      窗口尺寸永远贴着可见内容（三档：静默 / 冒泡 / 展开）。透明区域一样会拦住
      下面的点击，要绕开得靠 setIgnoreMouseEvents 加逐帧命中测试；窗口贴着内容长，
@@ -26,9 +26,9 @@
   .tank {
     flex: none; align-self: center; position: relative;
     width: 128px; height: 128px;
-    cursor: pointer;
+    cursor: grab;
     -webkit-app-region: no-drag;
-    /* 整体上下浮动。这一层是 CSS，因为"宠物在水里飘"是位移而不是形变 ——
+    /* 整体上下浮动。这一层是 CSS，因为“轻轻起伏”是位移而不是形变 ——
        把它也做进逐帧里会让每帧都要重画一遍位置，白费。 */
     animation: bob 3.4s ease-in-out infinite;
   }
@@ -40,26 +40,24 @@
   }
   @keyframes bob { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-5px) } }
 
-  .tank { cursor: grab }
-
-  /* 被拎起来：停掉自在的上下浮动，改成小幅左右挣扎，并压一层投影表示离开了
-     "水面"。挣扎比单纯倾斜更像活物 —— 静止的倾斜看着像贴纸。 */
+  /* 被拎起来：停掉自在的起伏，改成小幅摇晃，并压一层投影表示离了地。
+     摇晃配合 shy 那条序列帧一起看才像“被抓住了在扭”，单独用任一层都偏静。 */
   body.dragging .tank {
     cursor: grabbing;
-    animation: struggle .26s ease-in-out infinite;
+    animation: struggle .3s ease-in-out infinite;
     filter: drop-shadow(0 8px 12px rgba(0,0,0,.4));
   }
   @keyframes struggle {
-    0%   { transform: rotate(-12deg) scale(1.06) }
-    50%  { transform: rotate(6deg) scale(1.06) }
-    100% { transform: rotate(-12deg) scale(1.06) }
+    0%   { transform: rotate(-7deg) scale(1.05) }
+    50%  { transform: rotate(5deg) scale(1.05) }
+    100% { transform: rotate(-7deg) scale(1.05) }
   }
 
   @media (prefers-reduced-motion: reduce) {
-    body.dragging .tank { animation: none; transform: rotate(-8deg) }
+    body.dragging .tank { animation: none; transform: rotate(-6deg) }
   }
 
-  body.state-running .tank { animation-duration: 2s }
+  body.state-running .tank { animation-duration: 2.4s }
   body.state-attention .tank { filter: drop-shadow(0 0 8px var(--accent, #5b7cff)) }
 
   .bubble, .panel {
@@ -143,70 +141,135 @@
   cv.width = FRAME * SCALE
   cv.height = FRAME * SCALE
 
-  let accent = ACCENT.idle
+  /* ── 动画调度 ──────────────────────────────────────────────────────────
+     两层：**底色**一直循环，**一次性**插在上面播一轮就让位。
+
+     没有第三种情况 —— 一次性动画放完必定落回底色，底色没被改过就是 idle。
+     这样“任何时候没有在播别的就是 idle”是结构上保证的，而不是靠每个调用点
+     自己记得复位。
+
+     用 setTimeout 递归而不是 setInterval：每条动画的节奏不一样（困倦要慢、
+     鼓掌要快），而 idle 还要在一轮眨眼之后停一会儿再眨 —— 定长间隔表达不了
+     这些。逐帧重排定时器听着啰嗦，但省掉了一整套“改速率就得重建 interval”的
+     状态管理。 */
+
+  /** 各动画的单帧毫秒数。像素动画的味道来自帧率低而稳定，别跟着刷新率跑。 */
+  const RATE = {
+    idle: 170, thinking: 260, sleepy: 430, wave: 190,
+    shy: 210, happy: 200, clap: 170, sad: 260,
+  }
+
+  /** 认得的动画名。只用来挡拼错的名字，不区分类别 —— 是底色还是插播由调用方决定。 */
+  const ANIMS = new Set(globalThis.__dshSprite.ANIMS)
+
+  /** 主进程推来的状态 → 底色动画。状态名沿用旧约定，映射只此一处。 */
+  const BASE_OF = { idle: 'idle', running: 'thinking', attention: 'wave' }
+
+  /** 当前底色。 */
+  let base = 'idle'
+
+  /** 正在插播的一次性动画；没有则为 null。 */
+  let shot = null
+
   let frame = 0
-  let open = false
-  let bubbleTimer
+  let timer = null
 
-  /** 最近一次状态。拖拽结束要靠它把节奏还原，不能一律回到待机。 */
-  let state = 'idle'
+  /** 眼下真正该画哪条。 */
+  const current = () => shot ?? base
 
-  /** 待机时是否正在播眨眼那一段。 */
-  let blinking = false
+  const draw = () => { drawSprite(ctx, current(), frame, SCALE) }
 
-  const draw = () => { drawSprite(ctx, state, frame, SCALE) }
+  /** 眨完一轮之后停多久。带随机是因为等间隔的眨眼一眼就看得出是机器。 */
+  const idleHold = () => 2600 + Math.random() * 3400
 
-  /**
-   * 帧循环。
-   *
-   * 用固定间隔换帧而不是 requestAnimationFrame：像素动画的味道恰恰来自"帧率低而
-   * 稳定"，跟着显示器刷新率跑反而会显得滑，那是矢量动画的质感。
-   *
-   * 待机**不**一直循环。素材第一行是眨眼，连着播就成了规律抽搐 —— 所以待机长期
-   * 停在第 0 帧，由 scheduleBlink 偶尔放一次完整的四帧。
-   */
-  const tick = () => {
-    if (state === 'idle' && !blinking) { frame = 0; draw(); return }
+  const schedule = (ms) => { clearTimeout(timer); timer = setTimeout(step, ms) }
+
+  const step = () => {
+    const anim = current()
     frame = (frame + 1) % FRAMES
     draw()
-    // 一轮眨眼放完就停回第 0 帧等下一次。
-    if (blinking && frame === 0) blinking = false
-  }
-  let timer = setInterval(tick, 220)
-
-  const retime = (ms) => { clearInterval(timer); timer = setInterval(tick, ms) }
-
-  const scheduleBlink = () => {
-    setTimeout(() => {
-      // 只有待机才眨：忙碌和招呼那两条本身就在循环，插一段眨眼会打断它们。
-      if (state === 'idle' && !open) { blinking = true; frame = 0 }
-      scheduleBlink()
-    }, 3200 + Math.random() * 4600)
+    if (frame === 0) {
+      // 一次性动画放到头就让位，并立刻把底色的第 0 帧画出来 —— 否则会留着
+      // 上一条的末帧空等一个间隔，看着像卡了一下。
+      if (shot !== null) { shot = null; draw(); schedule(RATE[base] ?? 220); return }
+      // idle 那条是眨眼，连着播就是规律抽搐；放完一轮停一会儿才像在发呆。
+      if (anim === 'idle') { schedule(idleHold()); return }
+    }
+    schedule(RATE[anim] ?? 220)
   }
 
-  scheduleBlink()
+  /** 换底色。同一条就不打断，免得状态被重复推送时动画总从头开始。 */
+  const setBase = (next) => {
+    if (next === base && shot === null) return
+    base = next
+    shot = null
+    frame = 0
+    draw()
+    schedule(RATE[base] ?? 220)
+  }
+
+  /* ── 打盹 ───────────────────────────────────────────────────────────────
+     长时间没人理就切到 sleepy。只在 idle 底色上生效：智能体正在跑的时候
+     宠物去睡觉，等于把最该看的状态藏起来了。 */
+
+  const NAP_AFTER = 4 * 60 * 1000
+  let napTimer = null
+  let napping = false
+
+  const scheduleNap = () => {
+    clearTimeout(napTimer)
+    napTimer = setTimeout(() => {
+      if (base === 'idle' && shot === null && !open && drag === null) {
+        napping = true
+        setBase('sleepy')
+      }
+    }, NAP_AFTER)
+  }
+
+  /** 任何互动都算把她叫醒。 */
+  const wake = () => {
+    if (napping) { napping = false; setBase('idle') }
+    scheduleNap()
+  }
+
+  /**
+   * 插播一次性动画。放完自动回到底色，调用方不需要善后。
+   *
+   * 哪条动画算"一次性"由调用方定，而不是查一张固定的表：同一条 wave，主进程用它
+   * 当"打个招呼"（插播一轮），状态机用它当"等你处理"（一直招手）—— 意图在调用点，
+   * 表里写死只会逼着两边挑不同的素材。
+   *
+   * @param {string} anim 动画名；不认得的一律忽略
+   */
+  window.__dshPetPlay = (anim) => {
+    if (!ANIMS.has(anim)) return
+    wake()
+    shot = anim
+    frame = 0
+    draw()
+    schedule(RATE[anim] ?? 220)
+  }
+
   // 素材是异步解码的，加载完再画第一帧 —— 否则首帧是一张空画布。
-  void load().then(draw)
+  void load().then(() => { draw(); schedule(RATE.idle) })
+  scheduleNap()
 
   /**
    * 状态由主进程推送：宠物、托盘、通知看同一份状态，不各自推断。
-   *
-   * 帧率也是状态的一部分：忙的时候动得快，等人处理时慢而明显，待机几乎不动。
    */
-  const rateFor = (s) => (s === 'running' ? 160 : s === 'attention' ? 300 : 220)
-
   window.__dshPetState = (next) => {
-    state = next ?? 'idle'
-    blinking = false
-    frame = 0
-    accent = ACCENT[state] ?? ACCENT.idle
-    document.documentElement.style.setProperty('--accent', accent)
+    const state = next ?? 'idle'
+    document.documentElement.style.setProperty('--accent', ACCENT[state] ?? ACCENT.idle)
     body.classList.remove('state-idle', 'state-running', 'state-attention')
     body.classList.add(`state-${state}`)
-    // 拖拽中的节奏归拖拽管，状态推送不该把它抢回去。
-    if (drag === null) retime(rateFor(state))
-    draw()
+    napping = false
+    scheduleNap()
+    // 拖拽中的姿态归拖拽管，状态推送不该把它抢回去。
+    if (drag === null) setBase(BASE_OF[state] ?? 'idle')
   }
+
+  let bubbleTimer
+  let open = false
 
   /**
    * 弹一句话。展开输入时不弹 —— 那会把输入框挤走，而且用户正在打字。
@@ -214,6 +277,7 @@
    */
   window.__dshPetSay = async (text, ms = 4200) => {
     if (open || typeof text !== 'string' || text === '') return
+    wake()
     clearTimeout(bubbleTimer)
     bubble.textContent = text
     bubble.classList.remove('hidden')
@@ -238,6 +302,7 @@
   const setOpen = async (next) => {
     if (next === open) return
     open = next
+    wake()
     if (open) {
       clearTimeout(bubbleTimer)
       body.classList.remove('bubbling')
@@ -260,7 +325,7 @@
    * 按住宠物拖动。
    *
    * 自绘而不是交给 `-webkit-app-region: drag`：系统拖拽会把鼠标事件整个吞掉，页面
-   * 因此不知道自己正被拖，也就播不了挣扎动画。
+   * 因此不知道自己正被拖，也就播不了被拎起来的动画。
    *
    * 用指针捕获而不是在 window 上听 mousemove：拖动中光标经常跑到这个小窗口之外，
    * 没有捕获就会中途断流，宠物卡在半路。
@@ -271,13 +336,18 @@
   const DRAG_SLOP = 4
   let drag = null
 
+  /** 松手后该回到哪条底色。拖拽期间状态可能变过，不能一律回 idle。 */
+  let baseBeforeDrag = 'idle'
+
   tank.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return
     e.preventDefault()
     tank.setPointerCapture(e.pointerId)
     drag = { x: e.screenX, y: e.screenY, travelled: 0 }
+    baseBeforeDrag = base
     body.classList.add('dragging')
-    retime(70)
+    wake()
+    setBase('shy')
   })
 
   tank.addEventListener('pointermove', (e) => {
@@ -291,13 +361,16 @@
     window.__dshPet?.moveBy(dx, dy)
   })
 
-  const endDrag = (e) => {
+  const endDrag = () => {
     if (drag === null) return
-    // 手一抖也算按下，所以低于这点位移的一律当点击 —— 否则想点开却总是"拖了一下"。
+    // 手一抖也算按下，所以低于这点位移的一律当点击 —— 否则想点开却总是“拖了一下”。
     const tapped = drag.travelled <= DRAG_SLOP
     drag = null
     body.classList.remove('dragging')
-    retime(rateFor(state))
+    // 打盹时被拎起来，放下就当醒了 —— 刚被折腾完立刻接着睡说不过去。
+    setBase(baseBeforeDrag === 'shy' || baseBeforeDrag === 'sleepy' ? 'idle' : baseBeforeDrag)
+    napping = false
+    scheduleNap()
     if (tapped) void setOpen(!open)
   }
   tank.addEventListener('pointerup', endDrag)
@@ -314,6 +387,7 @@
     const result = await window.__dshPet?.ask(text)
     await setOpen(false)
     if (result && result.ok === false) {
+      window.__dshPetPlay('sad')
       setTimeout(() => { void window.__dshPetSay(result.error ?? '发送失败', 6000) }, 320)
     }
   }

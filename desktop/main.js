@@ -484,6 +484,9 @@ if (!app.requestSingleInstanceLock()) {
           onMoved: (pos) => { writePrefs({ ...readPrefs(), petPosition: pos }) },
         })
         pet.setState(agentState)
+        // 出场先招个手。素材要异步解码，早于 load() 的插播会被首帧覆盖掉，
+        // 所以往后挪一点 —— 招手是给人看的，宁可晚半秒也别没有。
+        setTimeout(() => { pet?.play('wave') }, 700)
       }
       /**
        * 把一段话交给宠物的会话。
@@ -598,6 +601,7 @@ if (!app.requestSingleInstanceLock()) {
         const body = brief === ''
           ? (zh ? '刚才那轮任务搞定啦~' : 'that task is done~')
           : (zh ? `你的「${brief}」任务搞定啦~` : `your task “${brief}” is done~`)
+        pet?.play('clap')
         pet?.say(address + body, 9000)
       }
 
@@ -614,6 +618,7 @@ if (!app.requestSingleInstanceLock()) {
         if (frame.event?.type !== 'assistant/message') return
         const said = textOf(frame.event.data?.message?.content)
         if (said === '') return
+        pet.play('happy')
         pet.say(said, Math.min(24000, Math.max(6000, said.length * 220)))
       }
 

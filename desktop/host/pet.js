@@ -160,6 +160,20 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
       ).catch(() => { /* 页面还没加载完 */ })
     },
 
+    /**
+     * 插播一次性动画（happy / clap / sad）。
+     *
+     * 与 setState 分开：状态是"她现在处于什么情形"，会一直持续；这里是"刚刚发生了
+     * 一件事"，放一轮就该回到原样。混成一个通道就得让调用方自己记得复位，而漏掉一
+     * 次复位，宠物就永远停在鼓掌上了。
+     */
+    play: (anim) => {
+      if (win.isDestroyed()) return
+      void win.webContents.executeJavaScript(
+        `window.__dshPetPlay?.(${JSON.stringify(anim)})`,
+      ).catch(() => { /* 页面还没加载完 */ })
+    },
+
     /** 推一个状态过去；窗口没了就静默忽略。 */
     setState: (state) => {
       if (win.isDestroyed()) return
