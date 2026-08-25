@@ -448,10 +448,15 @@ if (!app.requestSingleInstanceLock()) {
         pet.setState(agentState)
       }
       /**
-       * 把一句话发给一个会话。
+       * 把一句话发给宠物自己的会话。
        *
-       * 目标会话取最近一个；一个都没有就在第一个工作区里新建。悬浮窗的价值是
-       * "想到就记下"，不该反过来要求用户先去主界面挑一个会话。
+       * 会话建在宠物专属的工作区里：随口问的东西和你在主界面认真推进的项目不该
+       * 混在一起 —— 前者是随手记，后者有上下文。
+       *
+       * 光给 cwd 是不够的。cwd 只决定 agent 的工作目录，会话在侧边栏仍会掉进
+       * "未分组"，和别的临时会话堆在一处；要真正分开，必须显式登记工作区并把
+       * workspaceId 交给 session.create。workspace.create 是幂等的（同一路径重复
+       * 调用返回 created:false 与同一个 id），所以每次直接调用即可，不必先查。
        *
        * 失败原因原样回给页面 —— 悄悄吞掉的话，用户只会觉得"我发了但什么都没
        * 发生"，那比报错更糟。
@@ -471,10 +476,28 @@ if (!app.requestSingleInstanceLock()) {
           return parsed.result.value
         }
         try {
-          // 目录不存在时先建：session.create 拿 cwd 去登记工作区，目录得是真的。
+          // 目录不存在时先建：workspace.create 会对路径取 realpath，目录得是真的。
           fs.mkdirSync(PET_WORKSPACE, { recursive: true })
           if (petSessionId === null) {
-            petSessionId = (await call('session.create', { cwd: PET_WORKSPACE }))?.sessionId ?? null
+            const made = await call('workspace.create', { path: PET_WORKSPACE })
+            const workspaceId = made?.workspace?.workspaceId
+            // 默认标题是目录名（pet），只在**首次创建**时改成本地化的名字 ——
+            // 之后用户自己改的名字必须留住。改名失败纯属外观问题，不能让它挡住
+            // 这条消息。
+            if (made?.created === true && workspaceId !== undefined) {
+              try {
+                await call('workspace.rename', {
+                  workspaceId,
+                  title: currentLocale() === 'zh' ? '宠物' : 'Pet',
+                })
+              } catch { /* 标题没改成，会话照发 */ }
+            }
+            // 两者互斥（服务端原话："accepts workspaceId or cwd, not both"）：
+            // 工作区自己带着路径，给了 id 就不必再给 cwd。登记失败时退回 cwd，
+            // 会话会掉进"未分组"，但至少还能发出去。
+            petSessionId = (await call('session.create',
+              workspaceId === undefined ? { cwd: PET_WORKSPACE } : { workspaceId },
+            ))?.sessionId ?? null
           }
           const sessionId = petSessionId
           if (sessionId === null) return { ok: false, error: '没能建立宠物会话' }
