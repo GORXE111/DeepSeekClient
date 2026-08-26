@@ -1,18 +1,22 @@
 'use strict'
 
 /**
- * 聊天背景壁纸的本地库。
+ * 聊天背景壁纸。**一个槽位**：换一张就替掉上一张。
+ *
+ * 做成槽位而不是图库，是因为它本来就只有一个消费者 —— 对话区的背景同一时刻只显示
+ * 一张。留着一排缩略图会让人以为能收藏、能来回切，而实际上多出来的那些除了占地方
+ * 什么也不做。
  *
  * 图片**存盘，不进设置**。设置文档里只留一个 id。把图片本身塞进设置是最省事的
  * 做法，但那份文档会被反复整份读写 —— 我们自己的报喜逻辑每攒一批就要
  * `settings.describe` 一次，那时候顺带把几百 KB 的 base64 一起搬运，纯属浪费。
  * 何况 YAML 里躺着一大块 base64，出了问题也没法用眼睛看。
  *
- * id 用内容哈希：同一张图重复添加得到同一个 id，不会在库里堆出一排一模一样的
- * 缩略图；而且 URL 天然带版本，换了图就是换了 id，不用操心缓存。
+ * id 仍然用内容哈希，即使只有一张：URL 因此天然带版本，换了图就是换了地址，不用
+ * 操心缓存 —— 固定文件名会让浏览器拿着旧图不放。
  *
- * 每张图存两份：原图铺背景，缩略图进设置面板的小方块。少了缩略图，六个小方块
- * 就要解码六张 1600px 的大图，为了一个 44 像素见方的格子。
+ * 存两份：原图铺背景，缩略图进设置面板的预览格。少了缩略图，一个 88 像素宽的格子
+ * 要解码一张 1920px 的大图。
  *
  * @module wallpapers
  */
@@ -21,8 +25,13 @@ const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
 
-/** 库里最多留几张。再多就不是"切换背景"而是"管理相册"了。 */
-const MAX_COUNT = 12
+/**
+ * 槽位数。
+ *
+ * 是 1，不是"上限 1" —— 换一张就替掉上一张，靠的正是 `add` 里那段挤旧逻辑。留成
+ * 可注入的参数只为测试能验"挤旧"这件事本身在多于一张时也对。
+ */
+const MAX_COUNT = 1
 
 /** 单张图的字节上限。页面上传前已经缩过，超过这个数说明那边出了岔子。 */
 const MAX_BYTES = 8 * 1024 * 1024
@@ -47,7 +56,7 @@ function createWallpaperStore({ dir, maxCount = MAX_COUNT, maxBytes = MAX_BYTES 
   const ensureDir = () => { fs.mkdirSync(dir, { recursive: true }) }
 
   /**
-   * 库里现有的壁纸，新的在前。
+   * 槽位里现有的壁纸，新的在前。正常只会有 0 或 1 个。
    * @returns {string[]} id 列表
    */
   const list = () => {
@@ -68,10 +77,10 @@ function createWallpaperStore({ dir, maxCount = MAX_COUNT, maxBytes = MAX_BYTES 
   }
 
   /**
-   * 收一张图。
+   * 收一张图，替掉槽位里原来那张。
    *
-   * 超过数量上限就把最旧的挤掉，而不是报错让用户先去删 —— 这是个装饰功能，不该
-   * 为了它弹一个"请先清理"的对话框。
+   * 挤旧而不是报错让用户先去删 —— 这是个装饰功能，不该为了它弹一个"请先移除现有
+   * 壁纸"的对话框。选了新图就是想用新图。
    *
    * @param {Buffer} full 原图字节
    * @param {Buffer} thumb 缩略图字节
@@ -93,7 +102,7 @@ function createWallpaperStore({ dir, maxCount = MAX_COUNT, maxBytes = MAX_BYTES 
       return { ok: false, error: String(err && err.message ? err.message : err) }
     }
 
-    // 挤掉最旧的。list() 已经按新旧排好，从尾巴上砍。
+    // 挤掉旧的。list() 已经按新旧排好，从尾巴上砍；槽位数为 1 时就是"只留刚存的"。
     const ids = list()
     for (const stale of ids.slice(maxCount)) remove(stale)
     return { ok: true, id }

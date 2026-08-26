@@ -1,11 +1,14 @@
 /**
- * Wallpaper library for the conversation backdrop: pick an image off disk, keep
- * a few, switch between them.
+ * The conversation backdrop's wallpaper slot: **one** image, replaced in place.
  *
  * This replaced a custom-colour swatch. A flat colour behind the transcript was
  * the least interesting thing that slot could hold — the five gradients already
  * cover "I want some colour there", and a sixth shade of the same idea is not a
  * personalisation feature. An image is.
+ *
+ * One slot, not a library. The backdrop shows a single image at a time, so a row
+ * of stored thumbnails would suggest a collection you can flip through while
+ * doing nothing except taking up space. Picking a new image replaces the old one.
  *
  * The bytes never touch the settings document. The shell stores them under
  * `~/.dsh/wallpapers` and serves them from `/__wallpaper`; settings keep only
@@ -93,21 +96,24 @@ async function encode(file: File): Promise<{ full: string; thumb: string }> {
  * @returns the picker element tree, or null where the shell route is absent.
  */
 export function WallpaperPicker({ selection, onSelect, t }: WallpaperPickerProps) {
-  /** Stored ids, newest first. `null` until the first listing settles. */
-  const [items, setItems] = useState<readonly string[] | null>(null)
+  /**
+   * What the shell has on disk. Normally one id; an install that used the older
+   * multi-slot build can still hold several until the next replace evicts them.
+   */
+  const [items, setItems] = useState<readonly string[]>([])
   /** False once the route proves absent — a browser, or an older shell. */
   const [supported, setSupported] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const refresh = useCallback(async (): Promise<readonly string[]> => {
+  const refresh = useCallback(async (): Promise<string> => {
     const response = await fetch(WALLPAPER_ROUTE, { method: 'GET' })
     if (!response.ok) throw new Error(String(response.status))
     const body = await response.json() as { items?: unknown }
     const list = Array.isArray(body.items) ? body.items.filter((x): x is string => typeof x === 'string') : []
     setItems(list)
-    return list
+    return list[0] ?? ''
   }, [])
 
   useEffect(() => {
@@ -117,6 +123,16 @@ export function WallpaperPicker({ selection, onSelect, t }: WallpaperPickerProps
   }, [refresh])
 
   const current = wallpaperId(selection)
+
+  /**
+   * The id the slot shows.
+   *
+   * Prefers whatever the backdrop is actually using over whatever is newest on
+   * disk. They differ only on an install carried over from the multi-slot build,
+   * and showing the newest there would put a picture in the preview that is not
+   * the one on screen — then "replace" would quietly evict the one in use.
+   */
+  const stored = items.find(id => id === current) ?? items[0] ?? ''
 
   const onPick = async (file: File | undefined): Promise<void> => {
     if (file === undefined) return
@@ -135,7 +151,7 @@ export function WallpaperPicker({ selection, onSelect, t }: WallpaperPickerProps
       const { id } = await response.json() as { id?: string }
       if (typeof id !== 'string') { setError(t('chat.saveFailed')); return }
       await refresh()
-      // Selecting the new one is the whole point of having added it.
+      // Selecting it is the whole point of having picked it.
       onSelect(WALLPAPER_PREFIX + id)
     } finally {
       setBusy(false)
@@ -144,14 +160,15 @@ export function WallpaperPicker({ selection, onSelect, t }: WallpaperPickerProps
     }
   }
 
-  const onRemove = async (id: string): Promise<void> => {
+  const onRemove = async (): Promise<void> => {
+    if (stored === '') return
     setError('')
-    await fetch(`${WALLPAPER_ROUTE}/${id}`, { method: 'DELETE' }).catch(() => undefined)
-    const left = await refresh().catch(() => [] as readonly string[])
-    // Dropping the one in use would otherwise leave the backdrop pointing at a
+    await fetch(`${WALLPAPER_ROUTE}/${stored}`, { method: 'DELETE' }).catch(() => undefined)
+    await refresh().catch(() => '')
+    // Dropping the image in use would otherwise leave the backdrop pointing at a
     // 404 — visually identical to "no backdrop", but with the row still showing
     // it as selected.
-    if (current === id) onSelect(left[0] === undefined ? 'none' : WALLPAPER_PREFIX + left[0])
+    if (current === stored) onSelect('none')
   }
 
   if (!supported) return null
@@ -160,38 +177,29 @@ export function WallpaperPicker({ selection, onSelect, t }: WallpaperPickerProps
     <>
       <div className={css.subTitle}>{t('chat.wallpaper')}</div>
       <div className={css.controlRow}>
-        {(items ?? []).map(id => (
-          <span
-            key={id}
-            className={clsx(css.wallTile, current === id && css.wallTileSelected)}
-          >
-            <button
-              type="button"
-              className={css.wallPick}
-              aria-label={t('chat.wallpaper')}
-              aria-pressed={current === id}
-              style={{ backgroundImage: `url('${WALLPAPER_ROUTE}/${id}/thumb')` }}
-              onClick={() => { onSelect(WALLPAPER_PREFIX + id) }}
-            />
-            <button
-              type="button"
-              className={css.wallRemove}
-              title={t('chat.remove')}
-              aria-label={t('chat.remove')}
-              onClick={() => { void onRemove(id) }}
-            >
-              ×
-            </button>
-          </span>
-        ))}
+        {stored !== '' && (
+          <button
+            type="button"
+            className={clsx(css.wallTile, current === stored && css.wallTileSelected)}
+            aria-label={t('chat.wallpaper')}
+            aria-pressed={current === stored}
+            style={{ backgroundImage: `url('${WALLPAPER_ROUTE}/${stored}/thumb')` }}
+            onClick={() => { onSelect(WALLPAPER_PREFIX + stored) }}
+          />
+        )}
         <button
           type="button"
           className={css.ghostButton}
           disabled={busy}
           onClick={() => { fileRef.current?.click() }}
         >
-          {busy ? t('chat.adding') : t('chat.add')}
+          {busy ? t('chat.adding') : stored === '' ? t('chat.add') : t('chat.replace')}
         </button>
+        {stored !== '' && (
+          <button type="button" className={css.ghostButton} onClick={() => { void onRemove() }}>
+            {t('chat.remove')}
+          </button>
+        )}
         <input
           ref={fileRef}
           type="file"

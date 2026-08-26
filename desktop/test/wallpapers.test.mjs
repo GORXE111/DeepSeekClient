@@ -1,9 +1,9 @@
 /**
- * 壁纸库的测试。
+ * 壁纸槽位的测试。
  *
- * 两处非做不可：**id 直接拼进文件名**（那是挡路径穿越的唯一一道门），以及**配额
- * 会删文件**（写错方向就是把用户刚加的那张删掉）。两者在界面上都看不出来 —— 前者
- * 出事时静悄悄，后者出事时你以为是自己点错了。
+ * 两处非做不可：**id 直接拼进文件名**（那是挡路径穿越的唯一一道门），以及**换图会
+ * 删文件**（写错方向就是把用户刚选的那张删掉，留下旧的）。两者在界面上都看不出来
+ * —— 前者出事时静悄悄，后者出事时你以为是自己点错了。
  *
  * 用法：node desktop/test/wallpapers.test.js
  */
@@ -47,17 +47,19 @@ console.log('1) 加一张、读回来、列出来')
   check('原图和缩略图是两个文件', fs.readdirSync(dir).length === 2, fs.readdirSync(dir).join())
 }
 
-console.log('2) id 是内容哈希：同一张图不会堆两份')
+console.log('2) id 是内容哈希')
 {
   const { store } = setup()
   const first = store.add(jpeg('same'), jpeg('t'))
   const again = store.add(jpeg('same'), jpeg('t'))
+  // 同一张图重选一次不该换地址：URL 变了浏览器就要重新下载同样的字节。
   check('两次得到同一个 id', first.id === again.id, `${first.id} vs ${again.id}`)
-  check('库里只有一条', store.list().length === 1, String(store.list().length))
+  check('槽位里还是一张', store.list().length === 1, String(store.list().length))
 
   const other = store.add(jpeg('different'), jpeg('t'))
+  // 反过来，换了图就必须换地址，否则浏览器会拿着缓存里的旧图不放。
   check('不同内容不同 id', other.id !== first.id)
-  check('库里两条', store.list().length === 2, String(store.list().length))
+  check('槽位里仍然只有一张', store.list().length === 1, String(store.list().length))
 }
 
 console.log('3) 挡住不该收的东西')
@@ -113,7 +115,22 @@ console.log('4) id 直接拼文件名，形状不对一律拒绝')
   fs.unlinkSync(outside)
 }
 
-console.log('5) 超出数量就挤掉最旧的')
+console.log('5) 只有一个槽位：换一张就替掉上一张')
+{
+  const { store, dir } = setup()          // 不注入 maxCount，用产品里的真实值
+  const first = store.add(jpeg('one'), jpeg('t1'))
+  check('先有一张', store.list().join() === first.id)
+  const until = Date.now() + 12
+  while (Date.now() < until) { /* 让 mtime 分得开 */ }
+  const second = store.add(jpeg('two'), jpeg('t2'))
+  check('换完还是一张', store.list().length === 1, String(store.list().length))
+  check('留下的是新的', store.list()[0] === second.id, store.list().join())
+  check('旧的读不出来了', store.read(first.id, 'full') === null)
+  check('旧的缩略图也清了', store.read(first.id, 'thumb') === null)
+  check('盘上只剩两个文件', fs.readdirSync(dir).length === 2, fs.readdirSync(dir).join())
+}
+
+console.log('5b) 挤旧这件事本身在多于一张时也对')
 {
   const { store } = setup({ maxCount: 3 })
   const ids = []
@@ -131,15 +148,14 @@ console.log('5) 超出数量就挤掉最旧的')
   check('被挤掉的缩略图也清了', store.read(ids[0], 'thumb') === null)
 }
 
-console.log('6) 删')
+console.log('6) 移除')
 {
   const { store, dir } = setup()
-  const a = store.add(jpeg('a'), jpeg('ta'))
-  const b = store.add(jpeg('b'), jpeg('tb'))
-  check('删掉一张', store.remove(a.id) === true)
-  check('剩下另一张', store.list().join() === b.id, store.list().join())
-  check('两个文件都清了', fs.readdirSync(dir).length === 2, fs.readdirSync(dir).join())
-  check('重复删返回 false', store.remove(a.id) === false)
+  const only = store.add(jpeg('a'), jpeg('ta'))
+  check('删掉了', store.remove(only.id) === true)
+  check('槽位空了', store.list().length === 0, store.list().join())
+  check('原图和缩略图都清了', fs.readdirSync(dir).length === 0, fs.readdirSync(dir).join())
+  check('重复删返回 false', store.remove(only.id) === false)
 }
 
 console.log('7) 目录不存在也不炸')
