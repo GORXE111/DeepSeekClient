@@ -116,6 +116,9 @@ vm.createContext(sandbox)
 new vm.Script(code, { filename: 'pet.html' }).runInContext(sandbox)
 
 /* ── 断言 ───────────────────────────────────────────────────────────────── */
+/** 单帧毫秒数。八套动画共用一个，改 pet.html 里的 FRAME_MS 就要改这里。 */
+const FRAME_MS = 500
+
 let pass = 0
 let fail = 0
 const check = (name, cond, extra = '') => {
@@ -134,16 +137,31 @@ async function main() {
   check('素材就绪后报到了一次', readyCalls === 1, String(readyCalls))
   check('三条推送都接上了', subs.state !== null && subs.play !== null && subs.say !== null)
 
-  console.log('2) idle 一直循环，0.5 秒一帧')
+  console.log('2) 八套动画都是 0.5 秒一帧')
+  {
+    // 曾经按动画分别调速（鼓掌快、困倦慢），换一次状态节奏就变一次，像卡顿。
+    for (const anim of ['thinking', 'wave', 'sleepy']) {
+      pushState(anim === 'thinking' ? 'running' : anim === 'wave' ? 'attention' : 'idle')
+      if (anim === 'sleepy') { advance(4 * 60 * 1000 + 1000) }
+      const before = painted.frame
+      advance(FRAME_MS - 1)
+      const held = painted.frame === before
+      advance(2)
+      check(`${anim} 也是 ${FRAME_MS}ms 一帧`, held && painted.frame !== before, at())
+    }
+    pushState('idle')
+  }
+
+  console.log('2b) idle 一直循环')
   const seen = new Set()
-  for (let i = 0; i < 4; i++) { advance(500); seen.add(painted.frame) }
+  for (let i = 0; i < 4; i++) { advance(FRAME_MS); seen.add(painted.frame) }
   check('四帧都画过', seen.size === 4, [...seen].join(','))
   check('一轮之后回到第 0 帧', painted.frame === 0, at())
   // 不停顿：以前 idle 播完一轮要停 2.6–6 秒，看着像卡住了。
-  advance(500)
+  advance(FRAME_MS)
   check('立刻接着播下一轮', painted.anim === 'idle' && painted.frame === 1, at())
   let ticks = 0
-  for (let i = 0; i < 20; i++) { const before = painted.frame; advance(500); if (painted.frame !== before) ticks++ }
+  for (let i = 0; i < 20; i++) { const before = painted.frame; advance(FRAME_MS); if (painted.frame !== before) ticks++ }
   check('十秒里换了 20 帧', ticks === 20, String(ticks))
 
   console.log('3) 状态推送映射到底色')
@@ -156,9 +174,9 @@ async function main() {
   pushState('running')
   pushPlay('clap')
   check('插播中是 clap', painted.anim === 'clap', at())
-  for (let i = 0; i < 3; i++) advance(170)
+  for (let i = 0; i < 3; i++) advance(FRAME_MS)
   check('第 4 帧仍是 clap', painted.anim === 'clap' && painted.frame === 3, at())
-  advance(170)
+  advance(FRAME_MS)
   check('放完落回 thinking 第 0 帧', painted.anim === 'thinking' && painted.frame === 0, at())
   advance(3000)
   check('之后一直是 thinking', painted.anim === 'thinking', at())
@@ -166,7 +184,7 @@ async function main() {
   console.log('5) 底色没被改过时，插播落回 idle')
   pushState('idle')
   pushPlay('happy')
-  advance(200 * 4)
+  advance(FRAME_MS * 4)
   check('落回 idle', painted.anim === 'idle', at())
 
   console.log('6) 认不得的名字挡掉')
@@ -180,7 +198,7 @@ async function main() {
   check('sleepy 在循环', painted.anim === 'sleepy', at())
   pushPlay('happy')
   check('插播把她叫醒', painted.anim === 'happy', at())
-  advance(200 * 4)
+  advance(FRAME_MS * 4)
   check('放完回 idle 而不是接着睡', painted.anim === 'idle', at())
 
   console.log('8) 忙的时候不打盹')

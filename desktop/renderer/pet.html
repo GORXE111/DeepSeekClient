@@ -151,15 +151,18 @@
 
      每条底色都一直循环，包括 idle —— 没有"停在某一帧等着"这回事。
 
-     用 setTimeout 递归而不是 setInterval：每条动画的节奏差得远（鼓掌 170ms 一帧，
-     idle 500ms 一帧），而底色随时会换。逐帧重排定时器听着啰嗦，但省掉了一整套
-     “改速率就得重建 interval”的状态管理。 */
+     八套动画同一个节奏（FRAME_MS），所以这里其实用 setInterval 也行。仍然用递归
+     setTimeout，是因为切换动画时要能立刻从第 0 帧重新起算：interval 只能重建，而
+     重建的那一下会丢掉不定长的一段时间，表现为换动画时第一帧闪一下。 */
 
-  /** 各动画的单帧毫秒数。像素动画的味道来自帧率低而稳定，别跟着刷新率跑。 */
-  const RATE = {
-    idle: 500, thinking: 260, sleepy: 430, wave: 190,
-    shy: 210, happy: 200, clap: 170, sad: 260,
-  }
+  /**
+   * 单帧毫秒数。八套动画同一个节奏。
+   *
+   * 曾经按动画分别调（鼓掌快、困倦慢），看起来更"有表现力"，实际是每换一次状态
+   * 节奏就变一次，像卡顿。素材本身每套只有四帧，四帧撑不起节奏变化 —— 统一慢速
+   * 反而更像一个安静待着的小人。
+   */
+  const FRAME_MS = 500
 
   /** 认得的动画名。只用来挡拼错的名字，不区分类别 —— 是底色还是插播由调用方决定。 */
   const ANIMS = new Set(globalThis.__dshSprite.ANIMS)
@@ -192,10 +195,10 @@
     if (frame === 0 && shot !== null) {
       shot = null
       draw()
-      schedule(RATE[base] ?? 220)
+      schedule(FRAME_MS)
       return
     }
-    schedule(RATE[anim] ?? 220)
+    schedule(FRAME_MS)
   }
 
   /** 换底色。同一条就不打断，免得状态被重复推送时动画总从头开始。 */
@@ -205,7 +208,7 @@
     shot = null
     frame = 0
     draw()
-    schedule(RATE[base] ?? 220)
+    schedule(FRAME_MS)
   }
 
   /* ── 打盹 ───────────────────────────────────────────────────────────────
@@ -247,7 +250,7 @@
     shot = anim
     frame = 0
     draw()
-    schedule(RATE[anim] ?? 220)
+    schedule(FRAME_MS)
   }
 
   // 素材是异步解码的，加载完再画第一帧 —— 否则首帧是一张空画布。
@@ -255,7 +258,7 @@
   // 帧落在还没解码完的画布上。
   void load().then(() => {
     draw()
-    schedule(RATE.idle)
+    schedule(FRAME_MS)
     window.__dshPet?.ready()
   })
   scheduleNap()
