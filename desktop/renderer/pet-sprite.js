@@ -3,13 +3,8 @@
 /**
  * 宠物的序列帧绘制器。
  *
- * 八条动画，每条 4 帧、单帧 64×64、背景已透明。分两类用：
- *
- *  · **底色**（会一直循环）：idle、thinking、wave、sleepy、shy
- *  · **一次性**（放完一轮就回到底色）：happy、clap、sad
- *
- * 谁属于哪一类由调用方决定，这里只管画 —— 同一条 wave 既能当"一直招手等你处理"
- * 的底色，也能当"打个招呼"的一次性动画。
+ * 每条动画 4 帧、单帧 64×64、背景透明。加载哪一套由角色决定（见
+ * `pet-characters.js`）—— 这里只认"目录 + 动画名"，不知道有几个角色。
  *
  * 放大用 `imageSmoothingEnabled = false`。这一句是像素风的命门：默认的双线性插值
  * 会把硬边糊成渐变，放大之后就不是像素画了。
@@ -19,57 +14,58 @@
 
 ;(() => {
 
-/** 单帧的边长。素材是 4×4 的 256×256 表，切成八条 256×64 的横条。 */
+/** 单帧的边长。 */
 const FRAME = 64
 
 /** 每条动画的帧数。 */
 const FRAMES = 4
 
-/** 动画名到素材的映射。名字就是对外的动画名，多一层转换只会多一个出错的地方。 */
-const SHEETS = {
-  idle: 'assets/miku-idle.png',
-  thinking: 'assets/miku-thinking.png',
-  happy: 'assets/miku-happy.png',
-  sad: 'assets/miku-sad.png',
-  wave: 'assets/miku-wave.png',
-  clap: 'assets/miku-clap.png',
-  shy: 'assets/miku-shy.png',
-  sleepy: 'assets/miku-sleepy.png',
-}
+/** 已解码的图片，按动画名存。换角色时整个换掉。 */
+let images = new Map()
 
-/** 已解码的图片，按动画名存。 */
-const images = new Map()
-
-/** 全部素材就绪后置为 true；在此之前 draw 什么也不画，免得闪半张图。 */
+/** 当前这套素材是否已全部就绪；在此之前 draw 什么也不画，免得闪半张图。 */
 let ready = false
 
+/** 回落用的动画名 —— 每个角色都必须有 idle。 */
+const FALLBACK = 'idle'
+
 /**
- * 预加载八条精灵图。
- * @returns {Promise<void>} 全部就绪后兑现；单张失败不阻塞其余，那条动画回落到 idle。
+ * 加载一个角色的全部素材。
+ *
+ * @param {{dir: string}} def 角色定义
+ * @param {string[]} anims 要加载的动画名
+ * @returns {Promise<string[]>} 加载失败的动画名；全好时是空数组
  */
-function load() {
-  const one = (anim, src) => new Promise((resolve) => {
+function load(def, anims) {
+  ready = false
+  const next = new Map()
+  const failed = []
+  const one = (anim) => new Promise((resolve) => {
+    const src = `${def.dir}/${anim}.png`
     const img = new Image()
-    img.onload = () => { images.set(anim, img); resolve() }
+    img.onload = () => { next.set(anim, img); resolve() }
     // 少一张就少一条动画，不该让整只宠物起不来。
-    img.onerror = () => { console.error('[pet] 素材加载失败:', src); resolve() }
+    img.onerror = () => { console.error('[pet] 素材加载失败:', src); failed.push(anim); resolve() }
     img.src = src
   })
-  return Promise.all(Object.entries(SHEETS).map(([anim, src]) => one(anim, src)))
-    .then(() => { ready = true })
+  return Promise.all(anims.map(one)).then(() => {
+    images = next
+    ready = true
+    return failed
+  })
 }
 
 /**
  * 画一帧。
  *
  * @param {CanvasRenderingContext2D} ctx 目标画布
- * @param {string} anim 动画名；未知或缺素材时回落到 idle
+ * @param {string} anim 动画名；缺素材时回落到 idle
  * @param {number} frame 帧序号，内部对帧数取模
  * @param {number} scale 整数放大倍数
  */
 function draw(ctx, anim, frame, scale) {
   if (!ready) return
-  const img = images.get(anim) ?? images.get('idle')
+  const img = images.get(anim) ?? images.get(FALLBACK)
   if (img === undefined) return
   const size = FRAME * scale
   ctx.imageSmoothingEnabled = false
@@ -78,5 +74,5 @@ function draw(ctx, anim, frame, scale) {
   ctx.drawImage(img, col * FRAME, 0, FRAME, FRAME, 0, 0, size, size)
 }
 
-globalThis.__dshSprite = { FRAME, FRAMES, ANIMS: Object.keys(SHEETS), load, draw }
+globalThis.__dshSprite = { FRAME, FRAMES, load, draw }
 })()

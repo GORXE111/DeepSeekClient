@@ -13,7 +13,7 @@
 
 import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import { MAX_NICKNAME_CHARS } from '../pet-settings.ts'
+import { COMPANIONS, MAX_NICKNAME_CHARS } from '../pet-settings.ts'
 import type { createNicknameRowStore } from './store.ts'
 import css from './NicknameRow.module.css'
 
@@ -21,6 +21,8 @@ import css from './NicknameRow.module.css'
 export interface NicknameRowInjected {
   /** Store what the pet calls the user. */
   setNickname: (nickname: string) => void
+  /** Choose who sits on the desktop. */
+  setCharacter: (id: string) => void
 }
 
 /** Full component props: runtime share + store share + locale seat + injected face. */
@@ -33,12 +35,28 @@ export type NicknameRowProps =
  * @param props - composed slot props.
  * @returns the row element tree.
  */
-export function NicknameRow({ t, useStore, setNickname }: NicknameRowProps) {
+export function NicknameRow({ t, useStore, setNickname, setCharacter }: NicknameRowProps) {
   const nickname = useStore(s => s.nickname)
   const writable = useStore(s => s.writable)
+  const character = useStore(s => s.character)
   return (
     <div className={css.group}>
       <div className={css.title}>{t('title')}</div>
+      <div className={css.row}>
+        <span className={css.label}>{t('companion')}</span>
+        {COMPANIONS.map(one => (
+          <label key={one.id} className={css.check}>
+            <input
+              type="radio"
+              name="dsh-pet-companion"
+              checked={character === one.id}
+              disabled={!writable}
+              onChange={() => { setCharacter(one.id) }}
+            />
+            {one.name}
+          </label>
+        ))}
+      </div>
       <div className={css.row}>
         <span className={css.label}>{t('nickname')}</span>
         <input

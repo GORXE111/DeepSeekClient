@@ -51,4 +51,6 @@ contextBridge.exposeInMainWorld('__dshPet', {
   onPlay: (fn) => { ipcRenderer.on('dsh:pet-play', (_e, anim) => { fn(anim) }) },
   /** 订阅状态变化。 */
   onState: (fn) => { ipcRenderer.on('dsh:pet-state', (_e, state) => { fn(state) }) },
+  /** 订阅换角色。整套素材会重新加载，所以这条不常来。 */
+  onCharacter: (fn) => { ipcRenderer.on('dsh:pet-character', (_e, id) => { fn(id) }) },
 })

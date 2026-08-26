@@ -31,6 +31,7 @@ type NicknameRowActions = {
 export function createNicknameRowStore(): EngineStoreHandle<NicknameRowState, NicknameRowActions> {
   return defineStore({
     init: (): NicknameRowState => ({
+      character: 'miku',
       nickname: '',
       voice: false,
       voiceName: '',
@@ -49,6 +50,7 @@ export function createNicknameRowStore(): EngineStoreHandle<NicknameRowState, Ni
     actions: {
       sync: (d, next: PetSettings, writable: boolean, revision: number) => {
         if (revision < d.revision) return
+        d.character = next.character
         d.nickname = next.nickname
         d.voice = next.voice
         d.voiceName = next.voiceName

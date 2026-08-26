@@ -27,6 +27,9 @@ const { createWallpaperStore, createWallpaperRoutes, ROUTE: WALLPAPER_ROUTE }
 const { fetchSpeech } = require('./host/tts-http.js')
 // 文本清理规则只有一份：宠物窗当脚本加载同一个文件，主进程在这里 require 它。
 const { speakable: speakableOf } = require('./renderer/pet-voice.js')
+// 角色表两边共用：页面拿它挑素材，主进程拿它挑人设预设。写两份迟早对不上，而对
+// 不上的表现是"看着是庄方宜，说话是 MIKU"。
+const { character: petCharacter, DEFAULT_ID: DEFAULT_CHARACTER } = require('./renderer/pet-characters.js')
 const { createPetObserver, textOf } = require('./host/pet-observer.js')
 const { createAnnouncer, composeAnnouncement } = require('./host/pet-announce.js')
 
@@ -109,6 +112,13 @@ let agentState = 'idle'
  * 默认是空函数：宠物没开时这条路径什么也不做，调用点不必判空。
  */
 let onPetFrame = () => {}
+
+/**
+ * 设置面板改完宠物设置后 ping 这里。启动完成后被换成真正的实现。
+ *
+ * 需要这个钩子是因为协议处理器在引导早期就装好了，而读设置要等管道就绪。
+ */
+let refreshPetPrefs = () => {}
 
 /** 已经喊过的错误。每帧一行会把日志淹掉，而第一行就够定位了。 */
 const warned = new Set()
@@ -246,6 +256,16 @@ function serveFromPipe() {
       }
     }
 
+    // 设置面板改完宠物设置后 ping 一句"该去看了"。不带数据 —— 权威在设置文档里，
+    // 信 ping 带来的值等于给页面开了一条绕过设置的旁路。
+    if (url.pathname === '/__pet/refresh') {
+      if (request.method !== 'POST') return new Response('只接受 POST', { status: 405 })
+      refreshPetPrefs()
+      return new Response('{"ok":true}', {
+        status: 200, headers: { 'content-type': 'application/json; charset=utf-8' },
+      })
+    }
+
     if (pipe === null) return new Response('harness 尚未就绪', { status: 503 })
 
     // 注入脚本来自本地文件，不经管道。
@@ -308,18 +328,29 @@ function registerBridge() {
     }
     const id = req.id
     /**
+     * 这个页面还收得到消息吗。
+     *
+     * `isDestroyed()` 不够：webContents 还活着，它的渲染帧却可能已经被释放（刷新、
+     * 导航、关窗的那一小段）。此时 `send` 不会抛给我们 —— Electron 在内部就把
+     * "Render frame was disposed" 打到控制台了，所以外面包 try/catch 拦不住，只能
+     * 在调用之前就问清楚。
+     *
+     * 探针就是去碰一下 `mainFrame`：那正是 `send` 要投递的目标，帧没了访问它会抛，
+     * 于是"能不能碰"和"能不能发"是同一件事。
+     */
+    const reachable = () => {
+      if (event.sender.isDestroyed()) return false
+      try { return event.sender.mainFrame !== null } catch { return false }
+    }
+
+    /**
      * 把一帧转给发起这条流的页面。
      *
-     * isDestroyed() 挡不住全部情况：webContents 还活着，它的渲染帧却可能已经被
-     * 释放（刷新、导航、关窗的那一小段），此时 send 会抛 "Render frame was
-     * disposed"。没有一个可靠的同步谓词能问出这件事，所以只能兜住。
-     *
-     * 兜住而不上报：这是关窗时的正常竞态，不是错误。真正的错误在 openStream 那
-     * 一侧，不会走到这里。
+     * 页面拆到一半就悄悄丢掉 —— 那是关窗时的正常竞态，不是错误。
      */
     const send = (channel, ...args) => {
-      if (event.sender.isDestroyed()) return
-      try { event.sender.send(channel, id, ...args) } catch { /* 页面正在拆，收不着了 */ }
+      if (!reachable()) return
+      try { event.sender.send(channel, id, ...args) } catch { /* 刚好卡在拆的那一下 */ }
     }
     const close = openStream(pipe, req.path, {
       onOpen: () => send('dsh:stream-open'),
@@ -520,12 +551,17 @@ if (!app.requestSingleInstanceLock()) {
        * 本身在 host/pet-memory.js —— 跨天这条分支等一天才触发一次，留在这里就只能
        * 靠读代码相信它。
        *
-       * @type {{id: string, day: string, greetedAs: string} | null}
+       * @type {{id: string, day: string, greetedAs: string, who: string} | null}
        */
       let petSession = (() => {
         const p = readPrefs()
         if (typeof p.petSessionId !== 'string' || typeof p.petSessionDay !== 'string') return null
-        return { id: p.petSessionId, day: p.petSessionDay, greetedAs: String(p.petGreetedAs ?? '') }
+        return {
+          id: p.petSessionId,
+          day: p.petSessionDay,
+          greetedAs: String(p.petGreetedAs ?? ''),
+          who: String(p.petSessionWho ?? ''),
+        }
       })()
 
       /** 把当前这条记下来，好让下次启动接着用。 */
@@ -535,6 +571,7 @@ if (!app.requestSingleInstanceLock()) {
           petSessionId: petSession?.id,
           petSessionDay: petSession?.day,
           petGreetedAs: petSession?.greetedAs,
+          petSessionWho: petSession?.who,
         })
       }
 
@@ -553,12 +590,22 @@ if (!app.requestSingleInstanceLock()) {
         win.show()
         win.focus()
       }
+      /**
+       * 宠物窗当前显示的角色。null 表示还没读过设置。
+       *
+       * 用 null 而不是直接填默认值，是为了把"第一次读出来是庄方宜"和"用户中途换成
+       * 庄方宜"分开：后者要作废会话（人设变了），前者不该 —— 那会让每次启动都丢掉
+       * 存下来的那条会话。
+       */
+      let petWho = null
+
       const setPet = (on) => {
         // 关掉时把攒着的报喜一并丢掉：等它们到点时宠物已经没了，而下次开宠物
         // 又冒出几条几分钟前的旧消息，比不报更让人摸不着头脑。
         if (!on) { announcer.cancel(); pet?.destroy(); pet = undefined; return }
         if (pet !== undefined) return
         pet = createPet({
+          characterId: petWho ?? DEFAULT_CHARACTER,
           desktopDir: DESKTOP,
           getLocale: currentLocale,
           onActivate: showMainWindow,
@@ -615,6 +662,7 @@ if (!app.requestSingleInstanceLock()) {
        */
       const readPetPrefs = async () => {
         const fallback = {
+          character: DEFAULT_CHARACTER,
           nickname: '', voice: false, voiceName: '',
           voiceRate: 1.1, voiceVolume: 0.85, voiceScope: 'alerts',
         }
@@ -624,6 +672,8 @@ if (!app.requestSingleInstanceLock()) {
           const section = described?.namespaces?.find((n) => n.ns === 'pet')?.value
           if (section === null || typeof section !== 'object') return fallback
           return {
+            // 认不得的 id 由 petCharacter 回落到默认角色，所以这里不必自己判断
+            character: petCharacter(String(section.character ?? '')).id,
             nickname: String(section.nickname ?? '').trim().slice(0, 16),
             voice: section.voice === true,
             voiceName: String(section.voiceName ?? ''),
@@ -686,18 +736,19 @@ if (!app.requestSingleInstanceLock()) {
        * id 由我们指定：`session.create` 对同一个 id + cwd 是幂等的，所以重启之后拿
        * 着存下来的 id 再调一次，接上的还是原来那条，而不是又多一条。
        */
-      const openPetSession = async (day) => {
+      const openPetSession = async (day, who) => {
         // 目录得是真的：session.create 拿 cwd 去登记，路径不存在会被拒。
         fs.mkdirSync(PET_WORKSPACE, { recursive: true })
         const id = `session-${randomUUID()}`
         const created = (await call('session.create', {
           sessionId: id,
           cwd: PET_WORKSPACE,
-          agentPreset: 'pet',
+          // 人设跟着角色走。庄方宜不该用 MIKU 那份人设说话。
+          agentPreset: petCharacter(who).preset,
         }))?.sessionId ?? null
         if (created === null) return null
         await hideSession(created)
-        petSession = { id: created, day, greetedAs: '' }
+        petSession = { id: created, day, greetedAs: '', who }
         rememberPetSession()
         return petSession
       }
@@ -735,8 +786,12 @@ if (!app.requestSingleInstanceLock()) {
           const today = localDay()
           const rolled = shouldRoll(petSession, today)
           if (rolled) petSession = null
+          // 换了角色也要另起一条：那条会话的上下文里是上一位的人设和口吻，接着用
+          // 会得到一个自称庄方宜、却按 MIKU 的调子说话的东西。
+          const prefsNow = await readPetPrefs()
+          if (petSession !== null && petSession.who !== prefsNow.character) petSession = null
 
-          if (petSession === null) await openPetSession(today)
+          if (petSession === null) await openPetSession(today, prefsNow.character)
           const sessionId = petSession?.id ?? null
           if (sessionId === null) return { ok: false, error: '没能建立 MIKU 的会话' }
 
@@ -744,7 +799,7 @@ if (!app.requestSingleInstanceLock()) {
           // 都带上则是把同一句话反复塞进上下文，既费 token 又显得啰嗦。记下交代过的
           // 那个名字，改了名才重说一次 —— 否则你在设置里改完，她还会一直叫旧的。
           let outgoing = text
-          const { nickname } = await readPetPrefs()
+          const { nickname } = prefsNow
           if (nickname !== petSession.greetedAs) {
             petSession.greetedAs = nickname
             rememberPetSession()
@@ -792,11 +847,11 @@ if (!app.requestSingleInstanceLock()) {
         //
         // 判断放在这里而不是收素材的时候：中间隔着最多十几秒的攒批，那会儿你在
         // 看哪扇窗口和现在没关系。
-        if (mainWindowFocused()) { pet.play('clap'); return }
+        if (mainWindowFocused()) { pet.play('done'); return }
         const prefs = await readPetPrefs()
         const text = composeAnnouncement(digests, prefs.nickname, currentLocale() === 'zh')
         if (text === '') return
-        pet.play('clap')
+        pet.play('done')
         pet.say(text, Math.min(20000, 6000 + digests.length * 2000), await speechFor(prefs, true, text))
       }
 
@@ -813,7 +868,7 @@ if (!app.requestSingleInstanceLock()) {
         if (frame.event?.type !== 'assistant/message') return
         const said = textOf(frame.event.data?.message?.content)
         if (said === '') return
-        pet.play('happy')
+        pet.play('reply')
         // 想完了，回到真实的智能体状态 —— 不是一律回待机：你问她的时候主界面那位
         // 可能正忙着，那才是她该显示的。
         pet.setState(agentState)
@@ -848,18 +903,40 @@ if (!app.requestSingleInstanceLock()) {
       ipcMain.on('dsh:pet-move', (_e, dx, dy) => { pet?.moveBy(Number(dx) || 0, Number(dy) || 0) })
       ipcMain.on('dsh:pet-menu', () => { pet?.handleMenu() })
       /**
+       * 设置里可能改了角色，去看一眼。
+       *
+       * 上游没有"设置变了"的下行帧，所以由设置面板那边改完主动 ping 一下（见
+       * /__pet/refresh）。这里不信 ping 带来的值，自己重新读一遍设置 —— 权威在
+       * 设置文档里，ping 只是"该去看了"这个信号。
+       */
+      const applyPetPrefs = async () => {
+        const prefs = await readPetPrefs()
+        if (prefs.character === petWho) return
+        const first = petWho === null
+        petWho = prefs.character
+        if (first) return
+        // 换人就换一条会话：人设不同，接着用旧的会串味。下一句话会自己开新的。
+        petSession = null
+        rememberPetSession()
+        pet?.setCharacter(petWho)
+      }
+
+      /**
        * 页面画得出来了，这才把状态推过去。
        *
        * 以前是建完窗口立刻推，而那时页面还没加载完，消息没有接收方 —— 失败被
        * executeJavaScript 的 catch 悄悄吞掉，于是开宠物时哪怕智能体正在跑，她也
        * 一律是待机的。改由页面报到之后再推，"什么时候能收"由能收的那一方说了算。
        */
+      // 设置面板改完之后会 ping /__pet/refresh，落到这里。
+      refreshPetPrefs = () => { void applyPetPrefs() }
+
       ipcMain.on('dsh:pet-ready', () => {
         pet?.setState(agentState)
-        pet?.play('wave')   // 出场招个手
+        pet?.play('greet')   // 出场打个招呼
       })
-      if (petEnabled()) setPet(true)
-
+      // 开宠物挪到引导之后（见 showApp 那一段）：这里还读不到设置，先开出来会先
+      // 显示默认角色再跳到真正的那个，闪一下。
       // 菜单要等 setPet 定义之后再装：它把 setPet 作为回调交出去，早一步调用
       // 会撞上 const 的暂时性死区，整个启动直接抛错。
       installMenu(applyLocale, setPet)
@@ -872,6 +949,10 @@ if (!app.requestSingleInstanceLock()) {
       serveFromPipe()
       registerBridge()
       showApp()
+
+      // 先读出是谁，再把宠物开出来 —— 顺序反过来会先画默认角色再换，闪一下。
+      await applyPetPrefs()
+      if (petEnabled()) setPet(true)
 
       // 扫一遍历史遗留的宠物会话，把它们从"未分组"里收起来。
       //

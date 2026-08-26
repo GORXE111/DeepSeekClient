@@ -38,8 +38,30 @@ export const VOICE_SCOPES = ['alerts', 'all'] as const
 /** What the pet reads aloud. */
 export type VoiceScope = typeof VOICE_SCOPES[number]
 
+/**
+ * Selectable desktop companions, in row order.
+ *
+ * Kept in step with `desktop/renderer/pet-characters.js`, which owns what each
+ * one looks like and which persona it speaks with. This list exists only so the
+ * settings row has something to render; a name here with no entry there falls
+ * back to the default companion rather than failing.
+ */
+export const COMPANIONS = [
+  { id: 'miku', name: 'MIKU' },
+  { id: 'zhuang', name: '庄方宜' },
+] as const
+
+/** Chosen desktop companion. */
+export type CompanionId = typeof COMPANIONS[number]['id']
+
 /** Durable pet section. */
 export interface PetSettings {
+  /**
+   * Who sits on the desktop. Free string rather than a union so a companion
+   * added by a newer build degrades to the default instead of failing the whole
+   * settings document open.
+   */
+  character: string
   /**
    * What the desktop pet calls the user. Empty means "no name" — the pet then
    * addresses nobody rather than inventing a placeholder, which reads worse than
@@ -110,6 +132,7 @@ export interface PetSettings {
 
 /** Durable pet schema; also the wire envelope the browser scope validates against. */
 export const PetSettingsSchema: z<PetSettings> = z.object({
+  character: z.string().default('miku'),
   nickname: z.string().default(''),
   voice: z.boolean().default(false),
   voiceName: z.string().default(''),

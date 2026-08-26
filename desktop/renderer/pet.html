@@ -121,6 +121,7 @@
     <button class="send" id="send" disabled aria-label="发送">▶</button>
   </div>
 
+<script src="./pet-characters.js"></script>
 <script src="./pet-sprite.js"></script>
 <script src="./pet-voice.js"></script>
 <script>
@@ -139,8 +140,15 @@
   const ctx = cv.getContext('2d')
 
   const { FRAME, FRAMES, load, draw: drawSprite } = globalThis.__dshSprite
+  const { character, animsOf } = globalThis.__dshCharacters
   cv.width = FRAME * SCALE
   cv.height = FRAME * SCALE
+
+  /**
+   * 当前角色。主进程在推送第一个状态之前会先告诉我们是谁；在那之前先按默认角色
+   * 加载，免得首帧是一张空画布。
+   */
+  let who = character('')
 
   /* ── 动画调度 ──────────────────────────────────────────────────────────
      两层：**底色**一直循环，**一次性**插在上面播一轮就让位。
@@ -164,13 +172,19 @@
    */
   const FRAME_MS = 500
 
-  /** 认得的动画名。只用来挡拼错的名字，不区分类别 —— 是底色还是插播由调用方决定。 */
-  const ANIMS = new Set(globalThis.__dshSprite.ANIMS)
+  /**
+   * 主进程推来的状态 → 底色角色。
+   *
+   * 状态名（idle/running/attention）是壳的词汇，角色名（idle/busy/attention）是这
+   * 一层的词汇，而具体动画名是角色自己的词汇。三层翻译看着绕，但正是它让"加一个
+   * 角色"不需要动主进程 —— 主进程说的始终是"智能体在跑"，不是"播 thinking"。
+   */
+  const ROLE_OF_STATE = { idle: 'idle', running: 'busy', attention: 'attention' }
 
-  /** 主进程推来的状态 → 底色动画。状态名沿用旧约定，映射只此一处。 */
-  const BASE_OF = { idle: 'idle', running: 'thinking', attention: 'wave' }
+  /** 把角色名翻成当前角色的动画名。认不得的角色名回落到 idle。 */
+  const anim = (role) => who.roles[role] ?? who.roles.idle
 
-  /** 当前底色。 */
+  /** 当前底色，存的是**角色名**不是动画名 —— 换角色时不用重新推一遍状态。 */
   let base = 'idle'
 
   /** 正在插播的一次性动画；没有则为 null。 */
@@ -179,8 +193,8 @@
   let frame = 0
   let timer = null
 
-  /** 眼下真正该画哪条。 */
-  const current = () => shot ?? base
+  /** 眼下真正该画哪条动画。底色存的是角色名，插播存的已经是动画名。 */
+  const current = () => shot ?? anim(base)
 
   const draw = () => { drawSprite(ctx, current(), frame, SCALE) }
 
@@ -201,7 +215,7 @@
     schedule(FRAME_MS)
   }
 
-  /** 换底色。同一条就不打断，免得状态被重复推送时动画总从头开始。 */
+  /** 换底色（收的是角色名）。同一条就不打断，免得状态被重复推送时动画总从头开始。 */
   const setBase = (next) => {
     if (next === base && shot === null) return
     base = next
@@ -224,7 +238,7 @@
     napTimer = setTimeout(() => {
       if (base === 'idle' && shot === null && !open && drag === null) {
         napping = true
-        setBase('sleepy')
+        setBase('nap')
       }
     }, NAP_AFTER)
   }
@@ -236,36 +250,83 @@
   }
 
   /**
-   * 插播一次性动画。放完自动回到底色，调用方不需要善后。
+   * 插播一轮。
    *
-   * 哪条动画算"一次性"由调用方定，而不是查一张固定的表：同一条 wave，主进程用它
-   * 当"打个招呼"（插播一轮），状态机用它当"等你处理"（一直招手）—— 意图在调用点，
-   * 表里写死只会逼着两边挑不同的素材。
+   * 收的是**角色名**（done / reply / error / greet），不是动画名：主进程说的是
+   * "刚刚发生了什么"，演成什么由角色决定。同一个 done，MIKU 鼓掌，庄方宜报捷。
    *
-   * @param {string} anim 动画名；不认得的一律忽略
+   * @param {string} role 角色名；当前角色没有对应动画就忽略
    */
-  window.__dshPetPlay = (anim) => {
-    if (!ANIMS.has(anim)) return
+  window.__dshPetPlay = (role) => {
+    const name = who.roles[role]
+    if (name === undefined) return
     wake()
-    shot = anim
+    shot = name
     frame = 0
     draw()
     schedule(FRAME_MS)
   }
 
+  /* ── 闲时点缀 ───────────────────────────────────────────────────────────
+     待机久了偶尔做一个自己的小动作。给角色专属动作一个去处：庄方宜的雷法、青霆
+     剑、打坐都在这里，比塞进某个固定事件更像她自己在做自己的事。
+
+     只在真正待机时插播 —— 忙碌、打盹、被拖、展开输入时都不打断。没有专属动作的
+     角色（比如 MIKU）这段不会做任何事。 */
+
+  const FLOURISH_MIN = 25000
+  const FLOURISH_MAX = 70000
+  let flourishTimer = null
+
+  const scheduleFlourish = () => {
+    clearTimeout(flourishTimer)
+    if (who.flourish.length === 0) return
+    const wait = FLOURISH_MIN + Math.random() * (FLOURISH_MAX - FLOURISH_MIN)
+    flourishTimer = setTimeout(() => {
+      if (base === 'idle' && shot === null && !open && drag === null && !napping) {
+        shot = who.flourish[Math.floor(Math.random() * who.flourish.length)]
+        frame = 0
+        draw()
+        schedule(FRAME_MS)
+      }
+      scheduleFlourish()
+    }, wait)
+  }
+
   // 素材是异步解码的，加载完再画第一帧 —— 否则首帧是一张空画布。
   // 画得出来了才报到：主进程收到 ready 就会把当前状态推过来，早报到等于让那一
   // 帧落在还没解码完的画布上。
-  void load().then(() => {
+  /**
+   * 换一个角色：重新加载素材，回到待机。
+   *
+   * 素材整套换掉而不是增量补：两个角色的动画名有重叠（都有 idle），留着上一套的
+   * 图会在新角色缺某张时悄悄画出前一个角色 —— 那种错比缺图更难查。
+   *
+   * @param {string} id 角色 id
+   */
+  const useCharacter = async (id) => {
+    who = character(id)
+    base = 'idle'
+    shot = null
+    frame = 0
+    napping = false
+    await load(who, animsOf(who))
     draw()
     schedule(FRAME_MS)
-    window.__dshPet?.ready()
-  })
-  scheduleNap()
+    scheduleNap()
+    scheduleFlourish()
+  }
+
+  // 素材是异步解码的，加载完再画第一帧 —— 否则首帧是一张空画布。
+  // 画得出来了才报到：主进程收到 ready 就会把当前状态推过来，早报到等于让那一
+  // 帧落在还没解码完的画布上。
+  void useCharacter(new URLSearchParams(location.search).get('who') ?? '')
+    .then(() => { window.__dshPet?.ready() })
 
   // 主进程 → 页面的三条推送。函数体仍挂在 window 上：它们是这个页面的对外接口，
   // 测试直接调它们来驱动，不必绕一圈假 IPC。
   window.__dshPet?.onState((s) => { window.__dshPetState(s) })
+  window.__dshPet?.onCharacter?.((id) => { void useCharacter(id) })
   window.__dshPet?.onPlay((a) => { window.__dshPetPlay(a) })
   window.__dshPet?.onSay((t, ms, speech) => { void window.__dshPetSay(t, ms, speech) })
 
@@ -280,7 +341,7 @@
     napping = false
     scheduleNap()
     // 拖拽中的姿态归拖拽管，状态推送不该把它抢回去。
-    if (drag === null) setBase(BASE_OF[state] ?? 'idle')
+    if (drag === null) setBase(ROLE_OF_STATE[state] ?? 'idle')
   }
 
   let bubbleTimer
@@ -432,7 +493,7 @@
     baseBeforeDrag = base
     body.classList.add('dragging')
     wake()
-    setBase('shy')
+    setBase('held')
   })
 
   tank.addEventListener('pointermove', (e) => {
@@ -453,7 +514,7 @@
     drag = null
     body.classList.remove('dragging')
     // 打盹时被拎起来，放下就当醒了 —— 刚被折腾完立刻接着睡说不过去。
-    setBase(baseBeforeDrag === 'shy' || baseBeforeDrag === 'sleepy' ? 'idle' : baseBeforeDrag)
+    setBase(baseBeforeDrag === 'held' || baseBeforeDrag === 'nap' ? 'idle' : baseBeforeDrag)
     napping = false
     scheduleNap()
     if (tapped) void setOpen(!open)
@@ -472,7 +533,7 @@
     const result = await window.__dshPet?.ask(text)
     await setOpen(false)
     if (result && result.ok === false) {
-      window.__dshPetPlay('sad')
+      window.__dshPetPlay('error')
       setTimeout(() => { void window.__dshPetSay(result.error ?? '发送失败', 6000) }, 320)
     }
   }

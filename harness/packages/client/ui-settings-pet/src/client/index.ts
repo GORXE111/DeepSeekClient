@@ -52,6 +52,7 @@ export function apply(ctx: ClientContext): void {
 
   /** Defaults for a section the Host has not written yet. */
   const FALLBACK: PetSettings = {
+    character: 'miku',
     nickname: '', voice: false, voiceName: '', voiceRate: 1.1, voiceVolume: 0.85, voiceScope: 'alerts',
     voiceProvider: 'system', voiceUrl: '', voiceKey: '', voiceModel: '', voiceId: '', voiceFormat: 'mp3',
   }
@@ -70,6 +71,14 @@ export function apply(ctx: ClientContext): void {
     return {
       setNickname: (nickname: string) => {
         void host.set('nickname', nickname.slice(0, MAX_NICKNAME_CHARS))
+      },
+      setCharacter: (id: string) => {
+        void host.set('character', id).then(() => {
+          // 换人要立刻看得见。上游没有"设置变了"的下行帧，所以写完主动敲一下桌面
+          // 壳；壳收到之后自己重新读设置——这一声只是信号，不带数据。
+          // 浏览器里这条路由不存在（会落到 Host 然后 404），失败即忽略。
+          void fetch('/__pet/refresh', { method: 'POST' }).catch(() => undefined)
+        })
       },
     }
   }

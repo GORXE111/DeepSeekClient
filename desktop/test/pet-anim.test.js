@@ -72,6 +72,12 @@ const sandbox = {
     createElement: () => el(),
   },
   window: { addEventListener() {} },
+  // 页面从查询串里读"这次演谁"。空串表示默认角色。
+  location: { search: '' },
+  URLSearchParams: class {
+    constructor(q) { this.q = String(q) }
+    get() { return this.q === '' ? null : this.q }
+  },
   setTimeout: setTimeoutFake,
   clearTimeout: clearTimeoutFake,
   requestAnimationFrame: (fn) => setTimeoutFake(fn, 16),
@@ -81,7 +87,7 @@ sandbox.globalThis = sandbox
 
 /* preload 的替身。主进程 → 页面那三条走订阅，测试就从订阅口喂进去 —— 直接调
    window.__dshPetState 只能验调度器，验不到"页面到底有没有把订阅接上"。 */
-const subs = { state: null, play: null, say: null }
+const subs = { state: null, play: null, say: null, character: null }
 const resizes = []
 let readyCalls = 0
 sandbox.window.__dshPet = {
@@ -91,6 +97,7 @@ sandbox.window.__dshPet = {
   onState: (fn) => { subs.state = fn },
   onPlay: (fn) => { subs.play = fn },
   onSay: (fn) => { subs.say = fn },
+  onCharacter: (fn) => { subs.character = fn },
 }
 
 /** 主进程推一个状态过来。 */
@@ -99,14 +106,19 @@ const pushState = (s) => subs.state(s)
 const pushPlay = (a) => subs.play(a)
 /** 主进程让她说一句话。 */
 const pushSay = (t, ms) => subs.say(t, ms)
+/** 主进程让她换个角色。 */
+const pushCharacter = (id) => subs.character(id)
 
-// 精灵表替身：不解码 PNG，只把"画了哪条的第几帧"记下来。动画名必须和真素材一致，
-// 否则测试会放过 pet-sprite.js 里写错的名字。
+// 角色表用**真的那一份**，不是替身：这一层的价值恰恰在于"某个角色的某个角色名
+// 到底映射到哪条动画"，用假表等于把要验的东西替换掉了。
+sandbox.__dshCharacters = require('../renderer/pet-characters.js')
+
+// 精灵表替身：不解码 PNG，只把"画了哪条的第几帧"记下来，外加记录加载过哪些角色。
+const loaded = []
 sandbox.__dshSprite = {
   FRAME: 64,
   FRAMES: 4,
-  ANIMS: ['idle', 'thinking', 'happy', 'sad', 'wave', 'clap', 'shy', 'sleepy'],
-  load: () => Promise.resolve(),
+  load: (def, anims) => { loaded.push({ dir: def.dir, anims }); return Promise.resolve([]) },
   draw: (_ctx, anim, frame) => { painted = { anim, frame } },
 }
 
@@ -172,7 +184,7 @@ async function main() {
 
   console.log('4) 一次性动画放一轮就让位')
   pushState('running')
-  pushPlay('clap')
+  pushPlay('done')
   check('插播中是 clap', painted.anim === 'clap', at())
   for (let i = 0; i < 3; i++) advance(FRAME_MS)
   check('第 4 帧仍是 clap', painted.anim === 'clap' && painted.frame === 3, at())
@@ -183,20 +195,22 @@ async function main() {
 
   console.log('5) 底色没被改过时，插播落回 idle')
   pushState('idle')
-  pushPlay('happy')
+  pushPlay('reply')
   advance(FRAME_MS * 4)
   check('落回 idle', painted.anim === 'idle', at())
 
   console.log('6) 认不得的名字挡掉')
-  pushPlay('nope');            check('乱名字无效', painted.anim === 'idle', at())
-  pushPlay('miku-happy.png');  check('文件名无效', painted.anim === 'idle', at())
+  // 收的是角色名（done/reply/…），不是动画名。传动画名进来也该被挡掉 —— 否则主
+  // 进程写成 play('clap') 在 MIKU 身上会碰巧能用，换成庄方宜就静静地什么都不演。
+  pushPlay('nope');   check('乱名字无效', painted.anim === 'idle', at())
+  pushPlay('clap');   check('传动画名也无效', painted.anim === 'idle', at())
 
   console.log('7) 闲久了打盹，一有动静就醒')
   advance(4 * 60 * 1000 + 1000)
   check('4 分钟后 sleepy', painted.anim === 'sleepy', at())
   advance(2000)
   check('sleepy 在循环', painted.anim === 'sleepy', at())
-  pushPlay('happy')
+  pushPlay('reply')
   check('插播把她叫醒', painted.anim === 'happy', at())
   advance(FRAME_MS * 4)
   check('放完回 idle 而不是接着睡', painted.anim === 'idle', at())
@@ -239,6 +253,45 @@ async function main() {
     resizes.length = 0
     advance(4000)
     await new Promise((r) => setImmediate(r))
+  }
+
+  console.log('12) 角色')
+  {
+    const { CHARACTERS, animsOf } = require('../renderer/pet-characters.js')
+
+    // 素材按角色分目录加载，且只加载这个角色用得到的那些。
+    check('起步加载了默认角色', loaded[0].dir === 'assets/miku', JSON.stringify(loaded[0]))
+    check('加载的动画正好是它用得到的',
+      loaded[0].anims.join() === animsOf(CHARACTERS.miku).join(), loaded[0].anims.join())
+
+    // 同一个"事件"在不同角色身上演出不同动画 —— 这正是把角色名和动画名分开的理由。
+    pushState('idle')
+    pushPlay('done')
+    check('MIKU 的 done 是鼓掌', painted.anim === 'clap', at())
+
+    pushCharacter('zhuang')
+    await new Promise((r) => setImmediate(r))
+    check('换角色重新加载了素材', loaded.at(-1).dir === 'assets/zhuang', JSON.stringify(loaded.at(-1)))
+    check('换完回到待机', painted.anim === 'idle', at())
+
+    pushPlay('done')
+    check('庄方宜的 done 是报捷', painted.anim === 'victory', at())
+    pushState('running')
+    check('两边的 busy 都叫 thinking', painted.anim === 'thinking', at())
+    pushState('idle')
+
+    // 拖拽也走角色名：MIKU 害羞，庄方宜惊讶。
+    check('庄方宜被拎起来是惊讶', CHARACTERS.zhuang.roles.held === 'surprised')
+    check('MIKU 被拎起来是害羞', CHARACTERS.miku.roles.held === 'shy')
+
+    // 认不得的角色 id 要回落，而不是把宠物弄成一张空画布。
+    pushCharacter('天知道')
+    await new Promise((r) => setImmediate(r))
+    check('认不得的角色回落到默认', loaded.at(-1).dir === 'assets/miku', JSON.stringify(loaded.at(-1)))
+
+    // 认不得的角色名不该画出别的东西来。
+    pushPlay('天知道')
+    check('认不得的角色名被忽略', painted.anim === 'idle', at())
   }
 
   console.log()

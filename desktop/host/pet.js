@@ -50,8 +50,9 @@ const LABELS = {
  * @param {() => void} deps.onFreshTopic 在宠物专属工作区里另起一个会话
  * @param {{x: number, y: number} | undefined} deps.position 上次的位置
  * @param {(pos: {x: number, y: number}) => void} deps.onMoved 位置变化时落盘
+ * @param {string} deps.characterId 一开始用哪个角色
  */
-function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, onMoved }) {
+function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, onMoved, characterId }) {
   // 没有记录过位置时放在右下角，离系统托盘近 —— 那里通常也是最空的一块。
   const fallback = () => {
     const { workArea } = screen.getPrimaryDisplay()
@@ -87,7 +88,11 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
   win.setAlwaysOnTop(true, 'floating')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
 
-  void win.loadFile(path.join(desktopDir, 'renderer', 'pet.html'))
+  // 角色写在查询串里而不是等 IPC 推：页面一加载就得知道该拿哪套素材，晚一步就会
+  // 先画出默认角色再跳到真正的那个，看着像闪了一下。
+  void win.loadFile(path.join(desktopDir, 'renderer', 'pet.html'), {
+    query: { who: String(characterId ?? '') },
+  })
 
   /**
    * 拖完才落盘：拖动过程中每一帧都写文件毫无意义。
@@ -216,6 +221,9 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
 
     /** 推一个状态过去。 */
     setState: (state) => { send('dsh:pet-state', String(state ?? 'idle')) },
+
+    /** 换角色。页面会把整套素材重新加载一遍。 */
+    setCharacter: (id) => { send('dsh:pet-character', String(id ?? '')) },
     handleMenu: showMenu,
     /** 渲染进程的 IPC 要认得出是哪个窗口发来的。 */
     ownsWebContents: (contents) => !win.isDestroyed() && contents === win.webContents,
