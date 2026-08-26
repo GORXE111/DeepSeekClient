@@ -109,6 +109,11 @@ console.log('5) 失败都说得出原因')
     ['空音频', fakeFetch({ bytes: Buffer.alloc(0) }), '没有返回音频'],
     ['网络错误', fakeFetch({ throws: new Error('getaddrinfo ENOTFOUND') }), 'ENOTFOUND'],
   ]
+  // Node 的 fetch 自己只说一句 "fetch failed"，真实原因在 cause 里。服务没开和
+  // 域名写错要用户做的事完全不同，只报前者等于没报。
+  const wrapped = new Error('fetch failed')
+  wrapped.cause = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:9880'), { code: 'ECONNREFUSED' })
+  cases.push(['连接被拒要说出 ECONNREFUSED', fakeFetch({ throws: wrapped }), 'ECONNREFUSED'])
   for (const [label, fetch, needle] of cases) {
     const r = await fetchSpeech(CFG, '喂', { fetch })
     check(label, r.ok === false && r.error.includes(needle), JSON.stringify(r))

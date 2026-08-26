@@ -124,7 +124,13 @@ async function fetchSpeech(cfg, text, deps = {}) {
     if (err !== null && typeof err === 'object' && err.name === 'AbortError') {
       return { ok: false, error: `服务超过 ${Math.round(timeoutMs / 1000)} 秒没响应` }
     }
-    return { ok: false, error: String(err && err.message ? err.message : err).slice(0, 120) }
+    // Node 的 fetch 把真实原因塞在 cause 里，自己只报一句 "fetch failed" —— 那等于
+    // 没说。服务没开（ECONNREFUSED）和域名错（ENOTFOUND）要用户做的事完全不同。
+    const cause = err !== null && typeof err === 'object' ? err.cause : undefined
+    const detail = cause !== null && cause !== undefined && cause.message !== undefined
+      ? `${err.message}: ${cause.code ?? cause.message}`
+      : String(err && err.message ? err.message : err)
+    return { ok: false, error: detail.slice(0, 120) }
   } finally {
     clearTimeout(timer)
   }
