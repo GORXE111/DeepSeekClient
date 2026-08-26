@@ -59,7 +59,7 @@ const STRINGS = {
     undo: '撤销', redo: '重做', cut: '剪切', copy: '复制', paste: '粘贴', selectAll: '全选',
     language: '语言', chinese: '简体中文', english: 'English',
     view: '视图',
-    pet: '宠物模式',
+    pet: '桌面陪伴助手',
     about: '关于 DeepSeek Client', services: '服务',
     hide: '隐藏', hideOthers: '隐藏其他', unhide: '全部显示', quit: '退出',
     restartHint: '菜单语言已切换，但界面语言没能同步。',
@@ -70,7 +70,7 @@ const STRINGS = {
     undo: 'Undo', redo: 'Redo', cut: 'Cut', copy: 'Copy', paste: 'Paste', selectAll: 'Select All',
     language: 'Language', chinese: '简体中文', english: 'English',
     view: 'View',
-    pet: 'Pet Mode',
+    pet: 'Desktop Companion',
     about: 'About DeepSeek Client', services: 'Services',
     hide: 'Hide', hideOthers: 'Hide Others', unhide: 'Show All', quit: 'Quit',
     restartHint: 'The menu language changed, but the interface language could not be synced.',
@@ -109,7 +109,7 @@ function installMenu(applyLocale, togglePet) {
   ]
 
 
-  // 宠物模式默认关闭：一个会浮在别人所有窗口之上的东西，不该装完就自己冒出来。
+  // 默认关闭：一个会浮在别人所有窗口之上的东西，不该装完就自己冒出来。
   const petItem = {
     label: t.pet,
     type: 'checkbox',

@@ -41,14 +41,17 @@ function shouldRoll(session, today) {
 }
 
 /**
- * 从会话列表里挑出该收起来的宠物会话。
+ * 从会话列表里挑出该收起来的陪伴助手会话。
  *
- * 宠物会话不登记工作区，于是落进侧边栏的"未分组"那一栏 —— 跟桌面摆件说的话不该
- * 在那里占位置。上游给的唯一隐藏手段是归档（workspace.archiveSession）：会话照常
- * 活着、照常收发，只是不在任何分组界面出现。
+ * 这些会话不登记工作区，于是落进侧边栏的"未分组"那一栏 —— 跟桌面摆件说的话不该在
+ * 那里占位置。上游给的唯一隐藏手段是归档（workspace.archiveSession）：会话照常活
+ * 着、照常收发，只是不在任何分组界面出现。
  *
- * 按 cwd 认而不是按记下来的 id 认：记下来的只有最新那条，而早先版本每次启动都另起
- * 一条，那些正是要清掉的。
+ * 按 cwd 认而不是按记下来的 id 认：记下来的只有每位最新那条，而早先版本每次启动都
+ * 另起一条，那些正是要清掉的。
+ *
+ * 匹配的是"在根目录**之下**"而不是"等于根目录"：每个角色各占一间子目录，而更早的
+ * 版本把会话直接开在根目录里 —— 前缀匹配一次把两代都收走。
  *
  * 单拎出来是因为它踩过一次：线上的会话摘要用的字段是 `sessionId`，客户端内部那层
  * 归一化后的形状才叫 `id`。取错字段不报错，只是得到一串 undefined，然后整批归档
@@ -56,12 +59,12 @@ function shouldRoll(session, today) {
  *
  * @param {readonly object[]} items `session.list` 返回的摘要数组
  * @param {Iterable<string>} archivedIds 已经归档的 id，重复归档没必要
- * @param {string} petDir 宠物工作目录
+ * @param {string} petRoot 陪伴助手的工作目录根
  * @param {(p: string) => string} canonical 路径归一化（大小写、分隔符、相对段）
  * @returns {string[]} 该归档的会话 id
  */
-function strayPetSessions(items, archivedIds, petDir, canonical) {
-  const target = canonical(petDir)
+function strayPetSessions(items, archivedIds, petRoot, canonical) {
+  const root = canonical(petRoot)
   const archived = new Set(archivedIds)
   const out = []
   for (const item of Array.isArray(items) ? items : []) {
@@ -69,7 +72,9 @@ function strayPetSessions(items, archivedIds, petDir, canonical) {
     const { sessionId, cwd } = item
     if (typeof sessionId !== 'string' || sessionId === '') continue
     if (typeof cwd !== 'string' || cwd === '') continue
-    if (canonical(cwd) !== target) continue
+    const here = canonical(cwd)
+    // 带上分隔符再比前缀，否则 `~/.dsh/petulant` 这种同前缀的目录会被误收。
+    if (here !== root && !here.startsWith(root + '/')) continue
     if (archived.has(sessionId)) continue
     out.push(sessionId)
   }

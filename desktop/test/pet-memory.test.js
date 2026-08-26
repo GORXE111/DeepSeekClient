@@ -54,7 +54,21 @@ console.log('3) 该从"未分组"里收起来的是哪些')
     { sessionId: 's4', cwd: 'c:/users/admin/.dsh/PET/' },      // 大小写 + 尾斜杠
   ]
   const got = strayPetSessions(rows, [], PET, canon)
-  check('只挑宠物目录下的', got.join(',') === 's1,s3,s4', got.join(','))
+  check('只挑陪伴助手目录下的', got.join(',') === 's1,s3,s4', got.join(','))
+
+  // 每个角色各占一间子目录；更早的版本把会话直接开在根目录里。一次前缀匹配把两代
+  // 都收走。
+  const nested = [
+    { sessionId: 'n1', cwd: PET + '/miku' },
+    { sessionId: 'n2', cwd: PET + '/zhuang' },
+    { sessionId: 'n3', cwd: PET },                       // 旧版本的扁平会话
+    { sessionId: 'n4', cwd: 'C:/Users/admin/.dsh/petulant' },  // 同前缀但不是我们的
+    { sessionId: 'n5', cwd: 'C:/Users/admin/.dsh' },      // 根目录的上一层
+  ]
+  check('角色子目录都收', strayPetSessions(nested, [], PET, canon).join(',') === 'n1,n2,n3',
+    strayPetSessions(nested, [], PET, canon).join(','))
+  check('同前缀的旁的目录不误收', !strayPetSessions(nested, [], PET, canon).includes('n4'))
+  check('上层目录不误收', !strayPetSessions(nested, [], PET, canon).includes('n5'))
 
   check('已归档的不重复归档', strayPetSessions(rows, ['s1', 's4'], PET, canon).join(',') === 's3',
     strayPetSessions(rows, ['s1', 's4'], PET, canon).join(','))

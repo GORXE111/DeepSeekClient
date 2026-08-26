@@ -73,7 +73,19 @@ const BOOT_TIMEOUT_MS = 120_000
  * 前者是随手记，后者有上下文。给它一个独立目录，harness 会把它登记成独立工作区，
  * 于是两边的历史、工作目录、以及 agent 能碰到的文件都天然分开。
  */
-const PET_WORKSPACE = path.join(app.getPath('home'), '.dsh', 'pet')
+/** 桌面陪伴助手的工作目录根。每个角色在下面各占一间。 */
+const PET_ROOT = path.join(app.getPath('home'), '.dsh', 'pet')
+
+/**
+ * 某个角色的工作目录。
+ *
+ * 一人一间而不是共用一间：会话是按 cwd 归属的，同一间屋子里两位的对话会互相看得
+ * 见，问 MIKU 的事在庄方宜那边也算数——那正是"串味"。
+ *
+ * @param {string} who 角色 id
+ * @returns {string} 绝对路径
+ */
+const petWorkspace = (who) => path.join(PET_ROOT, who)
 
 /** 聊天背景壁纸库。放 ~/.dsh 下和其余用户数据作伴，卸载时一并带走。 */
 const wallpapers = createWallpaperStore({ dir: path.join(app.getPath('home'), '.dsh', 'wallpapers') })
@@ -505,8 +517,9 @@ if (!app.requestSingleInstanceLock()) {
       notifier = createNotifier({
         getWindow: () => win,
         getLocale: currentLocale,
-        // 宠物不是"你的智能体"：她的会话不该影响托盘状态，也不该弹完成通知。
-        isPetSession: (id) => petSession?.id === id,
+        // 陪伴助手不是"你的智能体"：她的会话不该影响托盘状态，也不该弹完成通知。
+        // 认全部角色的，不只当前这位：换过角色之后另一位那条仍在会话表里。
+        isPetSession: (id) => isOwnSession(id),
         onState: (state) => { agentState = state; tray?.setState(state); pet?.setState(state) },
         onSay: (kind, detail) => {
           // 'done' 刻意不在这里说话：干完一轮之后宠物要说的是**总结**，那由旁观器
@@ -537,42 +550,63 @@ if (!app.requestSingleInstanceLock()) {
       })
 
       /**
-       * 宠物会话，连同它建立的那一天。
+       * 会话：**每个角色各一条，而且只有一条。**
        *
-       * **始终只有一条。** 宠物是桌面上的一个摆件，不是一个项目 —— 跟她说的话不该
-       * 在侧边栏里堆成一列会话，更不该每次开应用就多出一条。
+       * 各一条是因为人设和上下文都不该串：跟 MIKU 说过的话不能出现在庄方宜的上下文
+       * 里，否则会得到一个自称庄方宜、却记得你跟 MIKU 聊过什么的东西。换回来的时候
+       * 也该接上原来那条，而不是从头开始。
        *
-       * 记在偏好里而不是只放内存：只放内存的话，每次启动都会另起一条，而旧的那些
-       * 全留在会话列表里。会话 id 由我们预先指定，`session.create` 对同一个
-       * id + cwd 是幂等的，于是重启之后接着用的还是同一条。
+       * 只有一条是因为她是桌面上的一个摆件，不是一个项目 —— 跟她说的话不该在侧边栏
+       * 里堆成一列会话，更不该每次开应用就多出一条。
+       *
+       * 记在偏好里而不是只放内存：只放内存的话，每次启动都会另起一条，而旧的那些全
+       * 留在会话列表里。会话 id 由我们预先指定，`session.create` 对同一个 id + cwd
+       * 是幂等的，于是重启之后接着用的还是同一条。
        *
        * 记忆仍是**暂时的**：随口问的东西不该在几天后还压在上下文里影响回答。跨过
        * 本地日历日就换一条，昨天的事就此翻篇；"新话题"手动换也走同一条路。过期规则
        * 本身在 host/pet-memory.js —— 跨天这条分支等一天才触发一次，留在这里就只能
        * 靠读代码相信它。
        *
-       * @type {{id: string, day: string, greetedAs: string, who: string} | null}
+       * @type {Map<string, {id: string, day: string, greetedAs: string}>}
        */
-      let petSession = (() => {
-        const p = readPrefs()
-        if (typeof p.petSessionId !== 'string' || typeof p.petSessionDay !== 'string') return null
-        return {
-          id: p.petSessionId,
-          day: p.petSessionDay,
-          greetedAs: String(p.petGreetedAs ?? ''),
-          who: String(p.petSessionWho ?? ''),
-        }
-      })()
+      const petSessions = new Map(Object.entries(readPrefs().petSessions ?? {}).flatMap(
+        ([who, v]) => (v !== null && typeof v === 'object' && typeof v.id === 'string'
+          ? [[who, { id: v.id, day: String(v.day ?? ''), greetedAs: String(v.greetedAs ?? '') }]]
+          : []),
+      ))
 
-      /** 把当前这条记下来，好让下次启动接着用。 */
-      const rememberPetSession = () => {
-        writePrefs({
-          ...readPrefs(),
-          petSessionId: petSession?.id,
-          petSessionDay: petSession?.day,
-          petGreetedAs: petSession?.greetedAs,
-          petSessionWho: petSession?.who,
-        })
+      // 一次性清掉上一版那几个扁平键。它们指向的会话开在旧的扁平工作目录里，换到
+      // 一人一间之后 cwd 对不上，接着用是错的 —— 那条会话由启动时的清扫收进归档。
+      // 不清的话，写偏好时的 spread 会把它们永远带下去。
+      {
+        const stale = readPrefs()
+        if (stale.petSessionId !== undefined) {
+          const { petSessionId, petSessionDay, petGreetedAs, petSessionWho, ...rest } = stale
+          writePrefs(rest)
+        }
+      }
+
+      /** 当前角色那条会话；还没读出角色、或这位还没开过口时为 null。 */
+      const petSessionOf = () => (petWho === null ? null : petSessions.get(petWho) ?? null)
+
+      /**
+       * 这条会话是不是陪伴助手自己的。
+       *
+       * 认**全部**角色的，不只当前显示的那位：换过角色之后另一位那条仍然在会话表
+       * 里，它说的话同样是"结果"，再喂回旁观器就成了自己总结自己。
+       *
+       * @param {string} id 会话 id
+       * @returns {boolean}
+       */
+      const isOwnSession = (id) => {
+        for (const session of petSessions.values()) if (session.id === id) return true
+        return false
+      }
+
+      /** 把全部会话记下来，好让下次启动接着用。 */
+      const rememberPetSessions = () => {
+        writePrefs({ ...readPrefs(), petSessions: Object.fromEntries(petSessions) })
       }
 
       /**
@@ -610,10 +644,10 @@ if (!app.requestSingleInstanceLock()) {
           getLocale: currentLocale,
           onActivate: showMainWindow,
           onFreshTopic: () => {
-            // 只丢掉引用即可：下一句话会照常开一条新的并藏起来。偏好里的旧 id 一并
-            // 清掉，否则重启后又会接回刚被丢掉的那条。
-            petSession = null
-            rememberPetSession()
+            // 只丢掉当前这位的那条：下一句话会照常开一条新的并藏起来。偏好里的旧 id
+            // 一并清掉，否则重启后又会接回刚被丢掉的那条。另一位的不受影响。
+            if (petWho !== null) petSessions.delete(petWho)
+            rememberPetSessions()
             pet?.say(currentLocale() === 'zh' ? '好，换个话题' : 'Fresh topic', 2600)
           },
           position: readPrefs().petPosition,
@@ -738,19 +772,21 @@ if (!app.requestSingleInstanceLock()) {
        */
       const openPetSession = async (day, who) => {
         // 目录得是真的：session.create 拿 cwd 去登记，路径不存在会被拒。
-        fs.mkdirSync(PET_WORKSPACE, { recursive: true })
+        const cwd = petWorkspace(who)
+        fs.mkdirSync(cwd, { recursive: true })
         const id = `session-${randomUUID()}`
         const created = (await call('session.create', {
           sessionId: id,
-          cwd: PET_WORKSPACE,
+          cwd,
           // 人设跟着角色走。庄方宜不该用 MIKU 那份人设说话。
           agentPreset: petCharacter(who).preset,
         }))?.sessionId ?? null
         if (created === null) return null
         await hideSession(created)
-        petSession = { id: created, day, greetedAs: '', who }
-        rememberPetSession()
-        return petSession
+        const session = { id: created, day, greetedAs: '' }
+        petSessions.set(who, session)
+        rememberPetSessions()
+        return session
       }
 
       /**
@@ -769,9 +805,10 @@ if (!app.requestSingleInstanceLock()) {
           const stray = strayPetSessions(
             listed?.items,
             spaces?.archivedSessionIds ?? [],
-            PET_WORKSPACE,
-            // Windows 上大小写不敏感，且两边可能一个带尾斜杠一个不带。
-            (p) => path.resolve(p).toLowerCase(),
+            PET_ROOT,
+            // Windows 上大小写不敏感；分隔符也要统一成 /，否则上面那个前缀判断
+            // 在混着反斜杠的路径上比不上。
+            (p) => path.resolve(p).split(path.sep).join('/').toLowerCase(),
           )
           for (const sessionId of stray) await hideSession(sessionId)
           if (stray.length > 0) console.log(`[pet] 已从会话列表里收起 ${stray.length} 条宠物会话`)
@@ -783,16 +820,18 @@ if (!app.requestSingleInstanceLock()) {
         try {
           // 跨天就翻篇。判断放在发送前而不是定时器里：宠物大多数时候没人理，定时器
           // 只会在无人使用时空转，而真正要紧的是"今天第一次说话"这一刻。
-          const today = localDay()
-          const rolled = shouldRoll(petSession, today)
-          if (rolled) petSession = null
-          // 换了角色也要另起一条：那条会话的上下文里是上一位的人设和口吻，接着用
-          // 会得到一个自称庄方宜、却按 MIKU 的调子说话的东西。
+          // 先确认这句话是说给谁的。角色各有各的会话，认错人就串味了。
           const prefsNow = await readPetPrefs()
-          if (petSession !== null && petSession.who !== prefsNow.character) petSession = null
+          const who = prefsNow.character
+          const today = localDay()
+          // 跨天就翻篇。判断放在发送前而不是定时器里：她大多数时候没人理，定时器只
+          // 会在无人使用时空转，而真正要紧的是"今天第一次说话"这一刻。
+          const rolled = shouldRoll(petSessions.get(who) ?? null, today)
+          if (rolled) petSessions.delete(who)
 
-          if (petSession === null) await openPetSession(today, prefsNow.character)
-          const sessionId = petSession?.id ?? null
+          let session = petSessions.get(who) ?? null
+          if (session === null) session = await openPetSession(today, who)
+          const sessionId = session?.id ?? null
           if (sessionId === null) return { ok: false, error: '没能建立 MIKU 的会话' }
 
           // 昵称只在**改过之后的第一句**里交代一次。人设是静态的，读不到设置；每条
@@ -800,9 +839,9 @@ if (!app.requestSingleInstanceLock()) {
           // 那个名字，改了名才重说一次 —— 否则你在设置里改完，她还会一直叫旧的。
           let outgoing = text
           const { nickname } = prefsNow
-          if (nickname !== petSession.greetedAs) {
-            petSession.greetedAs = nickname
-            rememberPetSession()
+          if (nickname !== session.greetedAs) {
+            session.greetedAs = nickname
+            rememberPetSessions()
             if (nickname !== '') {
               const zh = currentLocale() === 'zh'
               const note = zh ? `（称呼我为「${nickname}」）` : `(Call me “${nickname}”.)`
@@ -863,8 +902,11 @@ if (!app.requestSingleInstanceLock()) {
        * 停留时长按字数给：一句"好"挂十几秒是碍事，三行总结给四秒又读不完。
        */
       const routePetSpeech = (frame) => {
-        if (pet === undefined || petSession === null) return
-        if (frame?.type !== 'session/event' || frame.sessionId !== petSession.id) return
+        const mine = petSessionOf()
+        if (pet === undefined || mine === null) return
+        // 只认**当前这位**的：另一位的会话可能还在跑（比如刚换过角色），她的话不该
+        // 从现在这位嘴里冒出来。
+        if (frame?.type !== 'session/event' || frame.sessionId !== mine.id) return
         if (frame.event?.type !== 'assistant/message') return
         const said = textOf(frame.event.data?.message?.content)
         if (said === '') return
@@ -882,7 +924,7 @@ if (!app.requestSingleInstanceLock()) {
       }
 
       const petObserver = createPetObserver({
-        isPetSession: (id) => petSession?.id === id,
+        isPetSession: (id) => isOwnSession(id),
         onDigest: (digest) => {
           // 宠物没开就没人看，不必攒。
           if (pet === undefined) return
@@ -915,9 +957,7 @@ if (!app.requestSingleInstanceLock()) {
         const first = petWho === null
         petWho = prefs.character
         if (first) return
-        // 换人就换一条会话：人设不同，接着用旧的会串味。下一句话会自己开新的。
-        petSession = null
-        rememberPetSession()
+        // 会话不用动：每位各有各的一条，换回来时接着说，换过去时用她自己的那条。
         pet?.setCharacter(petWho)
       }
 
