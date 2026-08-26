@@ -24,7 +24,7 @@ const { createPet } = require('./host/pet.js')
 const { localDay, shouldRoll, strayPetSessions } = require('./host/pet-memory.js')
 const { createWallpaperStore, createWallpaperRoutes, ROUTE: WALLPAPER_ROUTE }
   = require('./host/wallpapers.js')
-const { fetchSpeech, createTtsRoutes, ROUTE: TTS_ROUTE } = require('./host/tts-http.js')
+const { fetchSpeech } = require('./host/tts-http.js')
 // 文本清理规则只有一份：宠物窗当脚本加载同一个文件，主进程在这里 require 它。
 const { speakable: speakableOf } = require('./renderer/pet-voice.js')
 const { createPetObserver, textOf } = require('./host/pet-observer.js')
@@ -82,9 +82,6 @@ const wallpapers = createWallpaperStore({ dir: path.join(app.getPath('home'), '.
  * 发的 fetch 本来就落到这儿。同源，不需要任何新的桥。
  */
 const serveWallpaper = createWallpaperRoutes(wallpapers)
-
-/** 设置面板"试听"外接语音时走的那条路由。 */
-const serveTts = createTtsRoutes()
 
 /** @type {import('node:child_process').ChildProcess | null} */
 let harness = null
@@ -246,15 +243,6 @@ function serveFromPipe() {
       try { return await serveWallpaper(request, url) } catch (err) {
         warnOnce('wallpaper', err)
         return new Response('壁纸读写失败', { status: 500 })
-      }
-    }
-
-    // 试听外接语音。绕壳走而不是让页面直连：直连会撞 CSP，而且密钥会出现在页面
-    // 的网络记录里。
-    if (url.pathname === TTS_ROUTE) {
-      try { return await serveTts(request) } catch (err) {
-        warnOnce('tts', err)
-        return new Response('语音合成失败', { status: 500 })
       }
     }
 

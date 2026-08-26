@@ -29,48 +29,53 @@ dist/        产物：安装包（不入库）
 使用。**本项目转为商业分发前必须另行取得 Crypton 许可，或换掉这套形象。**
 详见 [desktop/renderer/assets/README.md](desktop/renderer/assets/README.md)。
 
-### 语音提醒
+### 语音提醒（接口保留，默认不启用）
 
-默认关着，在 设置 → 通用设置 → 桌面宠物 → 语音提醒 打开。两种来源：
+**设置面板里没有这一栏，宠物默认不出声。**
 
-**系统音色** —— 离线免费，用机器上装了的中文音色。Windows 自带的那几个
-（Huihui / Kangkang / Yaoyao）都是十年前的 SAPI 音色，听着像播报。
+链路是通的、也测过，差的是**音色**。Windows 自带的中文音色只有 Huihui / Kangkang /
+Yaoyao 三个十年前的 SAPI 音色，实听下来像公共广播；为它们做一个开关，等于提供一个
+没人会一直开着的功能。所以整条路留作**扩展点**，而不是产品功能。
 
-没有音调滑块是实测的结论：SAPI 的音调标记会改变输出字节，但把 −10 / 0 / +10 三档
-各合成一遍再测中位基频，只在 176 / 184 / 181 Hz 之间抖，听感几乎不动。一个拧了没
-反应的旋钮比没有更糟。语速是真有用。
+（顺带记一笔实测，免得有人再走一遍：Windows 上 `pitch` 是无效的。SAPI 的音调标记
+会改变输出字节，但把 −10 / 0 / +10 各合成一遍测中位基频，只在 176 / 184 / 181 Hz
+之间抖，听感几乎不动。）
 
-**外接服务** —— 想要好听的声音走这条。本项目**不内置也不绑定任何音色**，只留接口。
+要用的话，手工改 `~/.dsh/settings.yaml` 的 `pet` 一节：
 
-接口就是 OpenAI 的 `/v1/audio/speech`，被抄得很广（Azure 网关、SiliconFlow、
+```yaml
+pet:
+  voice: true
+  voiceProvider: http
+  voiceUrl: https://…/v1/audio/speech
+  voiceKey: ""             # 留空则不发 Authorization 头
+  voiceId: <音色名>
+  voiceFormat: mp3
+  voiceScope: alerts       # alerts 只念提醒；all 也念聊天回答
+```
+
+接口是 OpenAI 的 `/v1/audio/speech`，被抄得很广（Azure 网关、SiliconFlow、
 Fish Audio、本地 GPT-SoVITS 的 HTTP 封装都认）。壳发出去的是：
 
 ```
-POST <你填的地址>
-Authorization: Bearer <你填的密钥>     # 密钥留空则不发这个头
+POST <voiceUrl>
+Authorization: Bearer <voiceKey>
 Content-Type: application/json
 
-{ "model": "<模型>", "input": "<要念的话>", "voice": "<音色名>",
+{ "model": …, "input": "要念的话", "voice": "<voiceId>",
   "response_format": "mp3|wav|opus|aac|flac", "speed": <语速> }
 ```
 
-期望回来的是**音频字节本身**（不是 JSON）。只要一个服务能接住这个请求、回一段音频，
-就能接上，不需要改代码。
+期望回来的是**音频字节本身**（不是 JSON）。实现在
+[desktop/host/tts-http.js](desktop/host/tts-http.js)，
+[tools/tts-server](tools/tts-server) 里有一个跑得通的本地参考实现（Kokoro，
+Apache-2.0）。约束：明文 `http` 只放行 `localhost` / `127.0.0.1`（本地模型服务基本
+都是裸 http，但往公网明文发密钥不行）；响应上限 4 MB、单句 120 字；失败会退回系统
+音色并在控制台写明原因。
 
-约束两条：明文 `http` 只放行 `localhost` / `127.0.0.1`（本地模型服务基本都是裸
-http，但往公网明文发密钥不行）；单次响应上限 4 MB、单句 120 字。
-
-合成在主进程做 —— 宠物窗是 `file://` 源够不着外部地址，而且密钥不该出现在页面里。
-外接失败会退回系统音色并在控制台记一次原因（401 / 404 / 超时 / 空音频各不相同）：
-静音是最糟的失败方式。密钥明文存在 `~/.dsh/settings.yaml`。
-
-要接的服务如果不说这套协议（比如火山引擎、Azure 原生 REST、GPT-SoVITS 的原生
-接口），需要在中间放一个转换层，或者在 `desktop/host/tts-http.js` 里加一个分支。
-
-**关于初音未来的声音**：接不了，也没打算内置。Miku 是**歌声**合成器，官方从来没有
-中文语音合成产品；社区那些克隆音色是拿 Vocaloid 音源训的，而 Crypton 的 CC BY-NC
-授的是**角色**（形象、名字、外观）**不含声音** —— 音源是另一份商业软件授权。
-接什么音色是使用者自己的事。
+**关于初音未来的声音**：接不了。Miku 是**歌声**合成器，官方从来没有中文语音合成
+产品；社区那些克隆音色是拿 Vocaloid 音源训的，而 Crypton 的 CC BY-NC 授的是**角色**
+（形象、名字、外观）**不含声音** —— 音源是另一份商业软件授权。
 
 ## 从源码构建
 

@@ -8,6 +8,12 @@ export const PET_SETTINGS_NAMESPACE = 'pet'
 /** Longest nickname the bubble can carry without pushing the message out of view. */
 export const MAX_NICKNAME_CHARS = 16
 
+/*
+ * Spoken alerts are wired but unsurfaced. See the `voice` field below for why;
+ * the constants and unions here stay because the durable schema still validates
+ * those fields, and a document that already carries them must keep parsing.
+ */
+
 /** Speech rate bounds. Outside these the voice stops being intelligible. */
 export const VOICE_RATE_MIN = 0.7
 
@@ -41,8 +47,15 @@ export interface PetSettings {
    */
   nickname: string
   /**
-   * Read notifications aloud. Off by default: something that makes noise on a
-   * shared desk has to be asked for, never sprung on you by an update.
+   * Read notifications aloud.
+   *
+   * **No settings row drives this**, and it stays false unless someone edits the
+   * user-settings document by hand. The plumbing works end to end; what does not
+   * work is the sound — the Chinese voices Windows ships read like a public
+   * address system, and an external service is the only way to get something
+   * worth hearing. Rather than ship a switch nobody would keep on, the whole
+   * path is left in place as an extension point: set this true, fill in
+   * `voiceProvider: http` plus the endpoint fields, and the pet speaks.
    */
   voice: boolean
   /**

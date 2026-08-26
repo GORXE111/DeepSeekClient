@@ -21,6 +21,11 @@
  *
  * 接什么是使用者自己的事，这个模块只负责把文字换成字节。
  *
+ * **现状：设置面板里没有语音那一栏，默认也不会念。** 系统自带的那几个中文音色实
+ * 听下来太差，为它们做一个开关等于提供一个没人会一直开着的功能。这条路留着是因为
+ * 它本身没问题 —— 差的是音色，而音色是外面的事。想用就在 `~/.dsh/settings.yaml`
+ * 的 `pet` 一节里把 `voice` 置 true 并填好地址与音色名，主进程照常会走这里。
+ *
  * @module tts-http
  */
 
@@ -136,32 +141,4 @@ async function fetchSpeech(cfg, text, deps = {}) {
   }
 }
 
-/** 这条路由挂在哪个前缀下。 */
-const ROUTE = '/__tts'
-
-/**
- * 建一个处理 `/__tts` 的请求处理器。
- *
- * 设置面板的"试听"用它。面板跑在 dsh:// 页面里，直接去 fetch 一个外部服务会撞
- * CSP，而且密钥就摆在页面的网络记录里了；绕一趟壳，密钥只在主进程里出现。
- *
- * 只接受 POST：这是一次会向外发请求、会花钱的动作，不该能被一个 GET 链接触发。
- *
- * @param {object} [deps] 注入用
- * @returns {(request: Request) => Promise<Response>}
- */
-function createTtsRoutes(deps = {}) {
-  const json = (value, status = 200) => new Response(JSON.stringify(value), {
-    status, headers: { 'content-type': 'application/json; charset=utf-8' },
-  })
-  return async (request) => {
-    if (request.method !== 'POST') return json({ error: '不支持的方法' }, 405)
-    let payload
-    try { payload = JSON.parse(await request.text()) } catch { return json({ error: '请求不是 JSON' }, 400) }
-    if (payload === null || typeof payload !== 'object') return json({ error: '请求不是 JSON' }, 400)
-    const result = await fetchSpeech(payload, String(payload.text ?? ''), deps)
-    return result.ok ? json({ dataUri: result.dataUri }) : json({ error: result.error }, 400)
-  }
-}
-
-module.exports = { fetchSpeech, checkConfig, createTtsRoutes, ROUTE, TIMEOUT_MS, MAX_BYTES, MAX_CHARS, MIME }
+module.exports = { fetchSpeech, checkConfig, TIMEOUT_MS, MAX_BYTES, MAX_CHARS, MIME }

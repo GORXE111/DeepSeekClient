@@ -7,13 +7,17 @@
  * 重点在**失败路径**：这个功能失败时的默认表现是"没声音"，而没声音和"我没开这个
  * 功能"长得一模一样。所以每一种失败都必须能说出原因。
  *
+ * 设置面板里没有语音那一栏，所以这层现在没有界面调用方 —— 它是留给后来人的接口，
+ * 由 `~/.dsh/settings.yaml` 里的 `pet.voice` 打开。正因为没有界面在天天替我们试，
+ * 这套测试才是它唯一的活性证明。
+ *
  * 用法：node desktop/test/tts-http.test.mjs
  */
 
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
-const { fetchSpeech, checkConfig, createTtsRoutes, ROUTE } = require('../host/tts-http.js')
+const { fetchSpeech, checkConfig } = require('../host/tts-http.js')
 
 let pass = 0
 let fail = 0
@@ -140,30 +144,6 @@ console.log('6) 超时')
   const r = await fetchSpeech(CFG, '喂', { fetch: hang, timeoutMs: 60 })
   check('超时了', r.ok === false && r.error.includes('没响应'), JSON.stringify(r))
   check('真的没等满 12 秒', Date.now() - started < 2000, String(Date.now() - started))
-}
-
-console.log('7) 路由')
-{
-  const handle = createTtsRoutes({ fetch: fakeFetch() })
-  const post = (body) => new Request('http://x' + ROUTE, {
-    method: 'POST', body: JSON.stringify(body), headers: { 'content-type': 'application/json' },
-  })
-
-  let r = await handle(post({ ...CFG, text: '试听一下' }))
-  check('POST 成功', r.status === 200)
-  const body = await r.json()
-  check('回 data URI', String(body.dataUri).startsWith('data:audio/'), String(body.dataUri).slice(0, 30))
-
-  r = await handle(post({ ...CFG, voiceUrl: '', text: '喂' }))
-  check('配置不全 400', r.status === 400)
-  check('带上原因', String((await r.json()).error).includes('服务地址'))
-
-  // 这是一次会向外发请求、会花钱的动作，不该能被一个 GET 链接触发。
-  r = await handle(new Request('http://x' + ROUTE, { method: 'GET' }))
-  check('GET 405', r.status === 405, String(r.status))
-
-  r = await handle(new Request('http://x' + ROUTE, { method: 'POST', body: '{ 坏 json' }))
-  check('坏 JSON 400', r.status === 400, String(r.status))
 }
 
 console.log()
