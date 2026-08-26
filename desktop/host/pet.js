@@ -190,8 +190,20 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
       schedulePersist()
     },
 
-    /** 让宠物说一句话。 */
-    say: (text, ms) => { send('dsh:pet-say', String(text ?? ''), Number(ms) || 4200) },
+    /**
+     * 让宠物说一句话。
+     *
+     * `speech` 跟着这一条一起走，而不是另开一条"当前语音设置"的通道：那样就得
+     * 操心什么时候刷新、刷新失败怎么办，而随消息下发天然永远是最新的。
+     *
+     * @param {string} text 气泡文本
+     * @param {number} ms 停留时长
+     * @param {{enabled: boolean, name: string, rate: number, volume: number} | null} [speech]
+     *   朗读参数；null 表示这一条不念
+     */
+    say: (text, ms, speech = null) => {
+      send('dsh:pet-say', String(text ?? ''), Number(ms) || 4200, speech)
+    },
 
     /**
      * 插播一次性动画。

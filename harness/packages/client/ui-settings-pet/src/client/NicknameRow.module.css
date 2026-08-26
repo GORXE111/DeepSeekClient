@@ -51,3 +51,62 @@
   line-height: 20px;
   color: var(--dsw-alias-label-caption);
 }
+
+/* Voice block heading. Lighter than the row title so the row still reads as one
+ * settings item rather than two stacked ones. */
+.subTitle {
+  margin-top: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.check input:disabled {
+  cursor: default;
+}
+
+.select {
+  box-sizing: border-box;
+  flex: 0 1 240px;
+  padding: 4px 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.ghostButton {
+  padding: 4px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.ghostButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.slider {
+  width: 110px;
+  accent-color: var(--dsw-alias-state-business-primary);
+}

@@ -46,7 +46,7 @@ contextBridge.exposeInMainWorld('__dshPet', {
      个对象，preload 根本够不着页面里的东西。 */
 
   /** 订阅"说一句话"。 */
-  onSay: (fn) => { ipcRenderer.on('dsh:pet-say', (_e, text, ms) => { fn(text, ms) }) },
+  onSay: (fn) => { ipcRenderer.on('dsh:pet-say', (_e, text, ms, speech) => { fn(text, ms, speech) }) },
   /** 订阅"插播一次性动画"。 */
   onPlay: (fn) => { ipcRenderer.on('dsh:pet-play', (_e, anim) => { fn(anim) }) },
   /** 订阅状态变化。 */

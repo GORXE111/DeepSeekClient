@@ -122,6 +122,7 @@
   </div>
 
 <script src="./pet-sprite.js"></script>
+<script src="./pet-voice.js"></script>
 <script>
   const ACCENT = { idle: '#6f9bd1', running: '#5b7cff', attention: '#e0902b' }
   // 单帧 64px，放大 2 倍到 128px 显示。CSS 尺寸必须与 canvas 像素尺寸一致 ——
@@ -263,7 +264,7 @@
   // 测试直接调它们来驱动，不必绕一圈假 IPC。
   window.__dshPet?.onState((s) => { window.__dshPetState(s) })
   window.__dshPet?.onPlay((a) => { window.__dshPetPlay(a) })
-  window.__dshPet?.onSay((t, ms) => { void window.__dshPetSay(t, ms) })
+  window.__dshPet?.onSay((t, ms, speech) => { void window.__dshPetSay(t, ms, speech) })
 
   /**
    * 状态由主进程推送：宠物、托盘、通知看同一份状态，不各自推断。
@@ -321,9 +322,20 @@
    * 弹一句话。展开输入时不弹 —— 那会把输入框挤走，而且用户正在打字。
    * 气泡自动消失：一条永远挂在桌面上的提示很快就变成视觉噪音。
    */
-  window.__dshPetSay = async (text, ms = 4200) => {
+  window.__dshPetSay = async (text, ms = 4200, speech = null) => {
     if (open || typeof text !== 'string' || text === '') return
     wake()
+    // 朗读参数跟着每条消息一起来，不走单独的设置通道 —— 那样就得操心什么时候
+    // 刷新、刷新失败怎么办，而这里天然永远是最新的。
+    if (speech !== null && speech.enabled === true) {
+      try {
+        // 外接服务合成好的音频直接放；没有就退回系统音色。主进程已经试过外接了，
+        // 走到这里说明要么没配、要么合成失败 —— 两种情况都该出声，静音等于坏了。
+        const voice = globalThis.__dshVoice
+        if (typeof speech.audio === 'string' && speech.audio !== '') voice?.playAudio(speech.audio, speech.volume)
+        else voice?.speak({ synth: speechSynthesis, Utterance: SpeechSynthesisUtterance }, text, speech)
+      } catch (err) { console.warn('[pet] 朗读失败:', err) }
+    }
     clearTimeout(bubbleTimer)
     bubble.textContent = text
     bubble.classList.remove('hidden')

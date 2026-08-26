@@ -24,6 +24,9 @@ const { createPet } = require('./host/pet.js')
 const { localDay, shouldRoll, strayPetSessions } = require('./host/pet-memory.js')
 const { createWallpaperStore, createWallpaperRoutes, ROUTE: WALLPAPER_ROUTE }
   = require('./host/wallpapers.js')
+const { fetchSpeech, createTtsRoutes, ROUTE: TTS_ROUTE } = require('./host/tts-http.js')
+// 文本清理规则只有一份：宠物窗当脚本加载同一个文件，主进程在这里 require 它。
+const { speakable: speakableOf } = require('./renderer/pet-voice.js')
 const { createPetObserver, textOf } = require('./host/pet-observer.js')
 const { createAnnouncer, composeAnnouncement } = require('./host/pet-announce.js')
 
@@ -79,6 +82,9 @@ const wallpapers = createWallpaperStore({ dir: path.join(app.getPath('home'), '.
  * 发的 fetch 本来就落到这儿。同源，不需要任何新的桥。
  */
 const serveWallpaper = createWallpaperRoutes(wallpapers)
+
+/** 设置面板"试听"外接语音时走的那条路由。 */
+const serveTts = createTtsRoutes()
 
 /** @type {import('node:child_process').ChildProcess | null} */
 let harness = null
@@ -240,6 +246,15 @@ function serveFromPipe() {
       try { return await serveWallpaper(request, url) } catch (err) {
         warnOnce('wallpaper', err)
         return new Response('壁纸读写失败', { status: 500 })
+      }
+    }
+
+    // 试听外接语音。绕壳走而不是让页面直连：直连会撞 CSP，而且密钥会出现在页面
+    // 的网络记录里。
+    if (url.pathname === TTS_ROUTE) {
+      try { return await serveTts(request) } catch (err) {
+        warnOnce('tts', err)
+        return new Response('语音合成失败', { status: 500 })
       }
     }
 
@@ -485,7 +500,13 @@ if (!app.requestSingleInstanceLock()) {
             question: zh ? '有个问题在等你回答哦' : 'A question is waiting for you',
             error: zh ? '出错啦，去看看？' : 'Something went wrong',
           }[kind]
-          if (text !== undefined) pet?.say(text, 6000)
+          // 审批、提问、出错都是"在叫你"，语音提醒的主要用武之地正是这几条：
+          // 它们**卡着进度**，没人应答就一直停在那里。
+          if (text !== undefined) {
+            void readPetPrefs()
+              .then((prefs) => speechFor(prefs, true, text))
+              .then((speech) => { pet?.say(text, 6000, speech) })
+          }
         },
       })
       // DSH_NO_TRAY=1 关掉托盘，用于把它从故障范围里排除。
@@ -592,17 +613,69 @@ if (!app.requestSingleInstanceLock()) {
       }
 
       /**
-       * 读用户给宠物定的昵称（设置 → 通用设置）。
+       * 读宠物那一节设置（设置 → 通用设置 → 桌面宠物）。
        *
-       * 读不到就返回空串，届时不称呼 —— 编一个占位（"用户""你好"）比不称呼更糟。
+       * 每次要用的时候现读，不做缓存：上游没有"设置变了"的下行帧，缓存就只能靠猜
+       * 什么时候过期，而猜错的表现是你在设置里改完、宠物却还按旧的来。这是一条本地
+       * 管道调用，一次报喜读一次，代价可以忽略。
+       *
+       * 读不到就用默认值：编一个占位称呼（"用户""你好"）比不称呼更糟，而语音默认
+       * 关着 —— 会出声的东西必须是被要求的，不能靠一次更新自己冒出来。
+       *
+       * @returns {Promise<{nickname: string, voice: boolean, voiceName: string,
+       *   voiceRate: number, voiceVolume: number, voiceScope: string}>}
        */
-      const readNickname = async () => {
-        if (pipe === null) return ''
+      const readPetPrefs = async () => {
+        const fallback = {
+          nickname: '', voice: false, voiceName: '',
+          voiceRate: 1.1, voiceVolume: 0.85, voiceScope: 'alerts',
+        }
+        if (pipe === null) return fallback
         try {
           const described = await call('settings.describe', {})
           const section = described?.namespaces?.find((n) => n.ns === 'pet')?.value
-          return String(section?.nickname ?? '').trim().slice(0, 16)
-        } catch { return '' }
+          if (section === null || typeof section !== 'object') return fallback
+          return {
+            nickname: String(section.nickname ?? '').trim().slice(0, 16),
+            voice: section.voice === true,
+            voiceName: String(section.voiceName ?? ''),
+            voiceRate: Number(section.voiceRate) || fallback.voiceRate,
+            voiceVolume: Number.isFinite(Number(section.voiceVolume))
+              ? Number(section.voiceVolume) : fallback.voiceVolume,
+            voiceScope: section.voiceScope === 'all' ? 'all' : 'alerts',
+          }
+        } catch { return fallback }
+      }
+
+      /**
+       * 把设置翻成 `pet.say` 要的朗读参数。
+       *
+       * 外接服务在这里就把音频合成好，随消息一起送过去。合成放在主进程而不是宠物
+       * 窗里：那个窗口是 file:// 源，够不着外部地址，而且密钥不该出现在页面里。
+       *
+       * 外接失败就退回系统音色，并把原因记一次日志 —— 静音是最糟的失败方式，用户
+       * 只会觉得"这功能坏了"，而不知道是密钥过期还是地址填错。
+       *
+       * @param {object} prefs readPetPrefs 的结果
+       * @param {boolean} isAlert 这一条是不是"在叫你"（报喜、审批、提问、出错）
+       * @param {string} text 要念的原文
+       * @returns {Promise<object | null>} null 表示这一条不念
+       */
+      const speechFor = async (prefs, isAlert, text) => {
+        if (!prefs.voice) return null
+        // 闲聊的回答默认不念：那是你主动问出来的，正看着它。
+        if (!isAlert && prefs.voiceScope !== 'all') return null
+        const base = {
+          enabled: true,
+          name: prefs.voiceName,
+          rate: prefs.voiceRate,
+          volume: prefs.voiceVolume,
+        }
+        if (prefs.voiceProvider !== 'http') return base
+        const made = await fetchSpeech(prefs, speakableOf(text))
+        if (made.ok) return { ...base, audio: made.dataUri }
+        warnOnce('tts-http', new Error(made.error))
+        return base
       }
 
       /**
@@ -683,7 +756,7 @@ if (!app.requestSingleInstanceLock()) {
           // 都带上则是把同一句话反复塞进上下文，既费 token 又显得啰嗦。记下交代过的
           // 那个名字，改了名才重说一次 —— 否则你在设置里改完，她还会一直叫旧的。
           let outgoing = text
-          const nickname = await readNickname()
+          const { nickname } = await readPetPrefs()
           if (nickname !== petSession.greetedAs) {
             petSession.greetedAs = nickname
             rememberPetSession()
@@ -732,10 +805,11 @@ if (!app.requestSingleInstanceLock()) {
         // 判断放在这里而不是收素材的时候：中间隔着最多十几秒的攒批，那会儿你在
         // 看哪扇窗口和现在没关系。
         if (mainWindowFocused()) { pet.play('clap'); return }
-        const text = composeAnnouncement(digests, await readNickname(), currentLocale() === 'zh')
+        const prefs = await readPetPrefs()
+        const text = composeAnnouncement(digests, prefs.nickname, currentLocale() === 'zh')
         if (text === '') return
         pet.play('clap')
-        pet.say(text, Math.min(20000, 6000 + digests.length * 2000))
+        pet.say(text, Math.min(20000, 6000 + digests.length * 2000), await speechFor(prefs, true, text))
       }
 
       const announcer = createAnnouncer({ emit: (batch) => { void announceBatch(batch) } })
@@ -752,10 +826,16 @@ if (!app.requestSingleInstanceLock()) {
         const said = textOf(frame.event.data?.message?.content)
         if (said === '') return
         pet.play('happy')
-        pet.say(said, Math.min(24000, Math.max(6000, said.length * 220)))
         // 想完了，回到真实的智能体状态 —— 不是一律回待机：你问她的时候主界面那位
         // 可能正忙着，那才是她该显示的。
         pet.setState(agentState)
+        // 先读设置再弹，而不是弹完再补一次朗读：say 一次就是一个气泡，补第二次会
+        // 把刚弹出来的那个顶掉重来。读设置走本地管道，这点延迟看不出来。
+        // 这条不是"在叫你"，是你主动问出来的 —— 只有把朗读范围调成"也念聊天回答"
+        // 才会念。
+        void readPetPrefs()
+          .then((prefs) => speechFor(prefs, false, said))
+          .then((speech) => { pet?.say(said, Math.min(24000, Math.max(6000, said.length * 220)), speech) })
       }
 
       const petObserver = createPetObserver({

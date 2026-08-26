@@ -1,10 +1,10 @@
 /**
- * Desktop pet settings, browser half: contributes the nickname row to
+ * Desktop pet settings, browser half: contributes the pet row to
  * Settings → General, next to Language and Appearance.
  *
- * It sits in General rather than behind a pet-specific section because it is one
- * short preference, and a section of its own would cost a navigation row to hold
- * a single field.
+ * It sits in General rather than behind a pet-specific section because these are
+ * a handful of scalar preferences, and a section of its own would cost a
+ * navigation row to hold them.
  */
 
 import type { BoundActions } from '@deepseek-ai/dsh-client-ui-slots'
@@ -14,7 +14,10 @@ import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import { MAX_NICKNAME_CHARS, PET_SETTINGS_NAMESPACE, type PetSettings } from '../pet-settings.ts'
+import {
+  MAX_NICKNAME_CHARS, PET_SETTINGS_NAMESPACE, VOICE_RATE_MAX, VOICE_RATE_MIN,
+  type PetSettings, type VoiceFormat, type VoiceProvider, type VoiceScope,
+} from '../pet-settings.ts'
 import { NicknameRow, type NicknameRowInjected } from './NicknameRow.tsx'
 import { createNicknameRowStore } from './store.ts'
 import { en, zh, type PetKey } from './locales.ts'
@@ -37,7 +40,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 export const inject = ['slots', 'locale', 'connection', 'remote', 'settingsScope']
 
 /**
- * Register the nickname row into the General section.
+ * Register the pet row into the General section.
  * @param ctx - client cordis context.
  */
 export function apply(ctx: ClientContext): void {
@@ -48,9 +51,15 @@ export function apply(ctx: ClientContext): void {
   const store = createNicknameRowStore()
   let bound: BoundActions<typeof store> | undefined
 
+  /** Defaults for a section the Host has not written yet. */
+  const FALLBACK: PetSettings = {
+    nickname: '', voice: false, voiceName: '', voiceRate: 1.1, voiceVolume: 0.85, voiceScope: 'alerts',
+    voiceProvider: 'system', voiceUrl: '', voiceKey: '', voiceModel: '', voiceId: '', voiceFormat: 'mp3',
+  }
+
   const publish = (): void => {
     const snapshot = host.getSnapshot()
-    bound?.sync(snapshot.value?.nickname ?? '', snapshot.writable === true, snapshot.revision ?? 0)
+    bound?.sync(snapshot.value ?? FALLBACK, snapshot.writable === true, snapshot.revision ?? 0)
   }
   ctx.effect(() => host.subscribe(publish), 'ui-settings-pet: adopt the durable nickname')
 
@@ -59,10 +68,27 @@ export function apply(ctx: ClientContext): void {
     // Re-read from the scope so nothing is lost between registration and first
     // render; the store's revision guard drops stale duplicates.
     publish()
+    const clamp = (value: number, low: number, high: number): number => (
+      Math.min(high, Math.max(low, Number.isFinite(value) ? value : low))
+    )
     return {
       setNickname: (nickname: string) => {
         void host.set('nickname', nickname.slice(0, MAX_NICKNAME_CHARS))
       },
+      setVoice: (on: boolean) => { void host.set('voice', on) },
+      setVoiceName: (name: string) => { void host.set('voiceName', name) },
+      // Clamped here rather than trusted from the slider: the durable value is
+      // also what the pet window feeds straight into an utterance, and a rate
+      // outside the accepted range makes the speech engine reject it silently.
+      setVoiceRate: (rate: number) => { void host.set('voiceRate', clamp(rate, VOICE_RATE_MIN, VOICE_RATE_MAX)) },
+      setVoiceVolume: (volume: number) => { void host.set('voiceVolume', clamp(volume, 0, 1)) },
+      setVoiceScope: (scope: VoiceScope) => { void host.set('voiceScope', scope) },
+      setVoiceProvider: (provider: VoiceProvider) => { void host.set('voiceProvider', provider) },
+      setVoiceUrl: (url: string) => { void host.set('voiceUrl', url.trim()) },
+      setVoiceKey: (key: string) => { void host.set('voiceKey', key.trim()) },
+      setVoiceModel: (model: string) => { void host.set('voiceModel', model.trim()) },
+      setVoiceId: (id: string) => { void host.set('voiceId', id.trim()) },
+      setVoiceFormat: (format: VoiceFormat) => { void host.set('voiceFormat', format) },
     }
   }
 
