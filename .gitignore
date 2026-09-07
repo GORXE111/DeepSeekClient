@@ -3,9 +3,14 @@ node_modules/
 # 构建产物。两者都由 `npm run build` 从源码重新产出，不入库：
 #  · runtime/ 是 harness 闭包（约 250MB）
 #  · dist/    是安装包
-runtime/
-dist/
-out/
+#
+# 前导斜杠不能省：不带斜杠的 `runtime/` 匹配任意深度的同名目录，会把
+# harness/packages/client/runtime（一个源码包，43 个 .ts）和
+# harness/python/sdk-runtime/.../runtime 一起吞掉——而且是静默的，
+# git status 里什么都看不到。
+/runtime/
+/dist/
+/out/
 
 # 本地语音服务的 Python 环境（约 700MB）。它是可选的实验工具，不是构建的一部分：
 # tools/tts-server/README.md 里写了怎么重建。模型权重不在这里，走 HuggingFace 的
