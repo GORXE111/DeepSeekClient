@@ -18,7 +18,7 @@ Kokoro 的存在 —— 它只会往你填的地址发一个标准请求。这�
     python server.py --voice zf_038 --port 9881
     python server.py --list          # 列出所有中文女声，不起服务
 
-然后在 设置 → 通用设置 → 桌面宠物 → 语音提醒 里：来源选「外接服务」，
+然后在 设置 → 通用设置 → 桌面陪伴助手 → 语音提醒 里：来源选「外接服务」，
 地址填 http://127.0.0.1:9880/v1/audio/speech，音色名填 zf_001，密钥留空。
 """
 
@@ -40,7 +40,7 @@ SAMPLE_RATE = 24000
 # 一次合成的字数上限，和桌面壳那边一致。再长的提醒没人听得下去。
 MAX_CHARS = 200
 
-# 只认这两个语言标记：'z' 中文、'a' 英文。宠物说中文。
+# 只认这两个语言标记：'z' 中文、'a' 英文。陪伴助手说中文。
 LANG_CODE = "z"
 
 
@@ -230,7 +230,7 @@ def main() -> int:
     server = ThreadingHTTPServer((args.host, args.port), make_handler(synth))
     url = f"http://{args.host}:{args.port}/v1/audio/speech"
     print(f"就绪 → {url}   默认音色 {args.voice}", flush=True)
-    print("在 设置 → 通用设置 → 桌面宠物 → 语音提醒 里把地址填成上面这个，密钥留空。", flush=True)
+    print("在 设置 → 通用设置 → 桌面陪伴助手 → 语音提醒 里把地址填成上面这个，密钥留空。", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

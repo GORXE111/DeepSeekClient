@@ -47,7 +47,7 @@ const check = (name, cond, extra = '') => {
  * 建一个通知器。
  * @param {object} o
  * @param {boolean} [o.focused] 主窗口是否有焦点
- * @param {string} [o.petId] 宠物会话 id
+ * @param {string} [o.petId] 陪伴助手会话 id
  */
 function setup({ focused = false, petId = 'pet' } = {}) {
   shown.length = 0
@@ -97,12 +97,12 @@ console.log('3) 窗口有焦点时不打扰')
   n.observe(status('work', true))
   n.observe(status('work', false))
   check('不弹系统通知', shown.length === 0, String(shown.length))
-  // 宠物不受这条约束：人就在屏幕前时系统通知反而容易被忽略，桌面角落有个小人
+  // 陪伴助手不受这条约束：人就在屏幕前时系统通知反而容易被忽略，桌面角落有个小人
   // 开口说话是更合适的提醒方式。
-  check('但仍然告诉宠物', says.some(([k]) => k === 'done'))
+  check('但仍然告诉陪伴助手', says.some(([k]) => k === 'done'))
 }
 
-console.log('4) 宠物那条会话整条不算数')
+console.log('4) 陪伴助手那条会话整条不算数')
 {
   // 这是修过的一个真 bug：跟桌面摆件说句"在吗"，托盘会显示成忙碌，她答完还会
   // 弹一条"任务已完成 / 智能体已结束本轮工作"。她不是"你的智能体"。
@@ -111,10 +111,10 @@ console.log('4) 宠物那条会话整条不算数')
   check('托盘不变忙', states.length === 0, JSON.stringify(states))
   n.observe(status('pet', false))
   check('不弹完成通知', shown.length === 0, String(shown.length))
-  check('也不让宠物说"忙完啦"', says.length === 0, JSON.stringify(says))
+  check('也不让陪伴助手说"忙完啦"', says.length === 0, JSON.stringify(says))
 }
 
-console.log('5) 宠物的忙碌不会盖掉真智能体的忙碌')
+console.log('5) 陪伴助手的忙碌不会盖掉真智能体的忙碌')
 {
   const { n, states } = setup()
   n.observe(status('work', true))
@@ -137,9 +137,9 @@ console.log('6) 审批与提问：需要你现在处理')
   check('处理完回空闲', states.at(-1) === 'idle', String(states.at(-1)))
 }
 
-console.log('7) 宠物不会请求审批，就算来了也不算数')
+console.log('7) 陪伴助手不会请求审批，就算来了也不算数')
 {
-  // 宠物预设没有任何工具，理论上不会有这种帧。挡住是因为"理论上不会"不是保证。
+  // 陪伴助手预设没有任何工具，理论上不会有这种帧。挡住是因为"理论上不会"不是保证。
   const { n, states } = setup()
   n.observe({ type: 'approval/requested', sessionId: 'pet', toolName: 'Bash' })
   check('不弹', shown.length === 0, String(shown.length))

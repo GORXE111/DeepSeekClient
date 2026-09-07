@@ -11,7 +11,7 @@
  * 用法：node desktop/test/pet-voice.test.js
  */
 
-// 这个模块是 UMD：宠物窗当脚本加载，主进程和这里 require。文本清理规则因此只有
+// 这个模块是 UMD：陪伴窗当脚本加载，主进程和这里 require。文本清理规则因此只有
 // 一份 —— 两份迟早分叉，而分叉的表现是本地念得好好的、外接服务念出一串"中圆点"。
 const { pickVoice, speakable, speak } = require('../renderer/pet-voice.js')
 

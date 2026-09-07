@@ -25,11 +25,11 @@ const { localDay, shouldRoll, strayPetSessions } = require('./host/pet-memory.js
 const { createWallpaperStore, createWallpaperRoutes, ROUTE: WALLPAPER_ROUTE }
   = require('./host/wallpapers.js')
 const { fetchSpeech } = require('./host/tts-http.js')
-// 文本清理规则只有一份：宠物窗当脚本加载同一个文件，主进程在这里 require 它。
+// 文本清理规则只有一份：陪伴窗当脚本加载同一个文件，主进程在这里 require 它。
 const { speakable: speakableOf } = require('./renderer/pet-voice.js')
 // 角色表两边共用：页面拿它挑素材，主进程拿它挑人设预设。写两份迟早对不上，而对
 // 不上的表现是"看着是庄方宜，说话是 MIKU"。
-const { character: petCharacter, DEFAULT_ID: DEFAULT_CHARACTER } = require('./renderer/pet-characters.js')
+const { character: petCharacter, linesOf, DEFAULT_ID: DEFAULT_CHARACTER } = require('./renderer/pet-characters.js')
 const { createPetObserver, textOf } = require('./host/pet-observer.js')
 const { createAnnouncer, composeAnnouncement } = require('./host/pet-announce.js')
 
@@ -67,13 +67,12 @@ const REPO = resolveRuntimeRoot()
 const BOOT_TIMEOUT_MS = 120_000
 
 /**
- * 宠物聊天的专属目录。
+ * 桌面陪伴助手的工作目录根。每个角色在下面各占一间（见 petWorkspace）。
  *
  * 从悬浮窗随口问的东西，和你在主界面里认真推进的项目不该混在一个会话流里 ——
  * 前者是随手记，后者有上下文。给它一个独立目录，harness 会把它登记成独立工作区，
  * 于是两边的历史、工作目录、以及 agent 能碰到的文件都天然分开。
  */
-/** 桌面陪伴助手的工作目录根。每个角色在下面各占一间。 */
 const PET_ROOT = path.join(app.getPath('home'), '.dsh', 'pet')
 
 /**
@@ -114,19 +113,19 @@ let notifier
 let tray
 /** @type {ReturnType<typeof createPet> | undefined} */
 let pet
-/** 最近一次状态。宠物是后开的，开的时候要能立刻显示当前状态而不是从空闲开始。 */
+/** 最近一次状态。她是后开的，开的时候要能立刻显示当前状态而不是从空闲开始。 */
 let agentState = 'idle'
 
 /**
- * 每一帧也交给宠物一份。
+ * 每一帧也交给陪伴助手一份。
  *
- * 帧处理器注册在更外层，拿不到宠物那一块里的闭包，所以留一个模块级钩子由那边填。
- * 默认是空函数：宠物没开时这条路径什么也不做，调用点不必判空。
+ * 帧处理器注册在更外层，拿不到陪伴助手那一块里的闭包，所以留一个模块级钩子由那边填。
+ * 默认是空函数：陪伴助手没开时这条路径什么也不做，调用点不必判空。
  */
 let onPetFrame = () => {}
 
 /**
- * 设置面板改完宠物设置后 ping 这里。启动完成后被换成真正的实现。
+ * 设置面板改完陪伴助手设置后 ping 这里。启动完成后被换成真正的实现。
  *
  * 需要这个钩子是因为协议处理器在引导早期就装好了，而读设置要等管道就绪。
  */
@@ -268,7 +267,7 @@ function serveFromPipe() {
       }
     }
 
-    // 设置面板改完宠物设置后 ping 一句"该去看了"。不带数据 —— 权威在设置文档里，
+    // 设置面板改完陪伴助手设置后 ping 一句"该去看了"。不带数据 —— 权威在设置文档里，
     // 信 ping 带来的值等于给页面开了一条绕过设置的旁路。
     if (url.pathname === '/__pet/refresh') {
       if (request.method !== 'POST') return new Response('只接受 POST', { status: 405 })
@@ -371,7 +370,7 @@ function registerBridge() {
         // 顺带旁听：通知与托盘状态都来自同一批帧，不必再开一条流。
         // 放在转发之后 —— 界面拿到数据的时机不该被通知逻辑拖慢。
         //
-        // 只解析一次。旁听方有三个（通知器、旁观器、宠物自己说话），各自解析就是
+        // 只解析一次。旁听方有三个（通知器、旁观器、陪伴助手自己说话），各自解析就是
         // 每帧三遍 JSON.parse；而流式回答一轮能有几百帧 assistant/chunk，这笔开销
         // 全花在把同一段文本重复解析上。
         let payload
@@ -379,7 +378,7 @@ function registerBridge() {
         if (payload === null || typeof payload !== 'object') return
         try { notifier?.observe(payload) } catch { /* 通知是附加价值，不能影响载体 */ }
         // 坏一帧不能影响载体，但也不能连编程错误一起咽掉 —— 这里曾经吞掉一个
-        // 每帧都抛的 ReferenceError，症状是"宠物再也不说话了"，而日志干干净净。
+        // 每帧都抛的 ReferenceError，症状是"她再也不说话了"，而日志干干净净。
         try { onPetFrame(payload) } catch (err) { warnOnce('pet-frame', err) }
       },
       onClose: () => { streams.delete(id); send('dsh:stream-close') },
@@ -522,7 +521,7 @@ if (!app.requestSingleInstanceLock()) {
         isPetSession: (id) => isOwnSession(id),
         onState: (state) => { agentState = state; tray?.setState(state); pet?.setState(state) },
         onSay: (kind, detail) => {
-          // 'done' 刻意不在这里说话：干完一轮之后宠物要说的是**总结**，那由旁观器
+          // 'done' 刻意不在这里说话：干完一轮之后陪伴助手要说的是**总结**，那由旁观器
           // 触发（见 petObserver）。这里再喊一句"忙完啦"，只会抢在总结前面把气泡
           // 占掉，然后被总结顶掉 —— 两句话打架，哪句都没看清。
           if (kind === 'done') return
@@ -625,7 +624,7 @@ if (!app.requestSingleInstanceLock()) {
         win.focus()
       }
       /**
-       * 宠物窗当前显示的角色。null 表示还没读过设置。
+       * 陪伴窗当前显示的角色。null 表示还没读过设置。
        *
        * 用 null 而不是直接填默认值，是为了把"第一次读出来是庄方宜"和"用户中途换成
        * 庄方宜"分开：后者要作废会话（人设变了），前者不该 —— 那会让每次启动都丢掉
@@ -633,8 +632,23 @@ if (!app.requestSingleInstanceLock()) {
        */
       let petWho = null
 
+      /**
+       * 当前这位的台词。
+       *
+       * 壳自己也要说几句话（报喜、换话题、跨天翻篇、会话没开起来），它们不经过模型，
+       * 但一样从她嘴里冒出来 —— 所以必须跟着角色走。写死在这里的时候，庄方宜会用
+       * MIKU 的腔调说"搞定啦~"，甚至自称 MIKU：气泡里分不出哪句是模型说的、哪句是
+       * 壳说的，串的就是这个味。
+       *
+       * 每次现取而不是缓存一份：角色可以随时在设置里换，缓存就得记着跟它同步，而
+       * 漏同步的表现是换完人之后她还用上一位的口吻说话。
+       *
+       * @returns {import('./renderer/pet-characters.js').Lines}
+       */
+      const petLines = () => linesOf(petWho ?? DEFAULT_CHARACTER, currentLocale() === 'zh')
+
       const setPet = (on) => {
-        // 关掉时把攒着的报喜一并丢掉：等它们到点时宠物已经没了，而下次开宠物
+        // 关掉时把攒着的报喜一并丢掉：等它们到点时她已经没了，而下次再开
         // 又冒出几条几分钟前的旧消息，比不报更让人摸不着头脑。
         if (!on) { announcer.cancel(); pet?.destroy(); pet = undefined; return }
         if (pet !== undefined) return
@@ -648,14 +662,14 @@ if (!app.requestSingleInstanceLock()) {
             // 一并清掉，否则重启后又会接回刚被丢掉的那条。另一位的不受影响。
             if (petWho !== null) petSessions.delete(petWho)
             rememberPetSessions()
-            pet?.say(currentLocale() === 'zh' ? '好，换个话题' : 'Fresh topic', 2600)
+            pet?.say(petLines().fresh, 2600)
           },
           position: readPrefs().petPosition,
           onMoved: (pos) => { writePrefs({ ...readPrefs(), petPosition: pos }) },
         })
       }
       /**
-       * 把一段话交给宠物的会话。
+       * 把一段话交给陪伴助手的会话。
        *
        * 用户直接问、以及旁观到一轮结束后请它总结，走的是**同一条会话** —— 这样
        * "第二点展开说说"这种追问才接得上，不必在两个面上来回切。
@@ -663,7 +677,7 @@ if (!app.requestSingleInstanceLock()) {
        * 会话用 `pet` 预设：那份人设定义了它是谁、怎么说话、以及它没有任何工具。
        * 工作目录仍指向 ~/.dsh/pet，与主界面的项目隔开。
        *
-       * 不登记可见工作区：宠物是旁观者而不是一个项目，在侧边栏占一栏只是噪音。
+       * 不登记可见工作区：陪伴助手是旁观者而不是一个项目，在侧边栏占一栏只是噪音。
        *
        * 失败原因原样回给调用方 —— 悄悄吞掉的话，用户只会觉得"我发了但什么都没
        * 发生"，那比报错更糟。
@@ -682,10 +696,10 @@ if (!app.requestSingleInstanceLock()) {
       }
 
       /**
-       * 读宠物那一节设置（设置 → 通用设置 → 桌面宠物）。
+       * 读陪伴助手那一节设置（设置 → 通用设置 → 桌面陪伴助手）。
        *
        * 每次要用的时候现读，不做缓存：上游没有"设置变了"的下行帧，缓存就只能靠猜
-       * 什么时候过期，而猜错的表现是你在设置里改完、宠物却还按旧的来。这是一条本地
+       * 什么时候过期，而猜错的表现是你在设置里改完、她却还按旧的来。这是一条本地
        * 管道调用，一次报喜读一次，代价可以忽略。
        *
        * 读不到就用默认值：编一个占位称呼（"用户""你好"）比不称呼更糟，而语音默认
@@ -722,7 +736,7 @@ if (!app.requestSingleInstanceLock()) {
       /**
        * 把设置翻成 `pet.say` 要的朗读参数。
        *
-       * 外接服务在这里就把音频合成好，随消息一起送过去。合成放在主进程而不是宠物
+       * 外接服务在这里就把音频合成好，随消息一起送过去。合成放在主进程而不是陪伴
        * 窗里：那个窗口是 file:// 源，够不着外部地址，而且密钥不该出现在页面里。
        *
        * 外接失败就退回系统音色，并把原因记一次日志 —— 静音是最糟的失败方式，用户
@@ -753,7 +767,7 @@ if (!app.requestSingleInstanceLock()) {
       /**
        * 把一条会话从所有分组界面里摘掉。
        *
-       * 跟摆件说的话不该在侧边栏里占位置。宠物会话没有登记工作区，于是落进"未分组"
+       * 跟摆件说的话不该在侧边栏里占位置。陪伴助手会话没有登记工作区，于是落进"未分组"
        * 那一栏 —— 那正是用户看到的"分组"。归档是上游给的唯一隐藏手段：会话本身照常
        * 活着、照常收发，只是不在任何分组界面出现（见 workspace.archiveSession）。
        *
@@ -765,7 +779,7 @@ if (!app.requestSingleInstanceLock()) {
       }
 
       /**
-       * 开一条新的宠物会话（并藏起来）。
+       * 开一条新的陪伴助手会话（并藏起来）。
        *
        * id 由我们指定：`session.create` 对同一个 id + cwd 是幂等的，所以重启之后拿
        * 着存下来的 id 再调一次，接上的还是原来那条，而不是又多一条。
@@ -790,7 +804,7 @@ if (!app.requestSingleInstanceLock()) {
       }
 
       /**
-       * 启动时把所有宠物会话扫一遍藏起来。
+       * 启动时把所有陪伴助手会话扫一遍藏起来。
        *
        * 只在新建时藏是不够的：这个目录下可能已经堆了一批（早先的版本每次启动都另起
        * 一条），而且归档集是全局持久的，重复归档是幂等的。按 cwd 认而不是按记下来的
@@ -811,14 +825,14 @@ if (!app.requestSingleInstanceLock()) {
             (p) => path.resolve(p).split(path.sep).join('/').toLowerCase(),
           )
           for (const sessionId of stray) await hideSession(sessionId)
-          if (stray.length > 0) console.log(`[pet] 已从会话列表里收起 ${stray.length} 条宠物会话`)
+          if (stray.length > 0) console.log(`[pet] 已从会话列表里收起 ${stray.length} 条陪伴助手会话`)
         } catch (err) { warnOnce('pet-sweep', err) }
       }
 
       const petPrompt = async (text) => {
         if (pipe === null) return { ok: false, error: '后台服务尚未就绪' }
         try {
-          // 跨天就翻篇。判断放在发送前而不是定时器里：宠物大多数时候没人理，定时器
+          // 跨天就翻篇。判断放在发送前而不是定时器里：她大多数时候没人理，定时器
           // 只会在无人使用时空转，而真正要紧的是"今天第一次说话"这一刻。
           // 先确认这句话是说给谁的。角色各有各的会话，认错人就串味了。
           const prefsNow = await readPetPrefs()
@@ -832,7 +846,7 @@ if (!app.requestSingleInstanceLock()) {
           let session = petSessions.get(who) ?? null
           if (session === null) session = await openPetSession(today, who)
           const sessionId = session?.id ?? null
-          if (sessionId === null) return { ok: false, error: '没能建立 MIKU 的会话' }
+          if (sessionId === null) return { ok: false, error: petLines().noSession }
 
           // 昵称只在**改过之后的第一句**里交代一次。人设是静态的，读不到设置；每条
           // 都带上则是把同一句话反复塞进上下文，既费 token 又显得啰嗦。记下交代过的
@@ -855,11 +869,11 @@ if (!app.requestSingleInstanceLock()) {
             content: [{ type: 'text', text: outgoing }],
           })
           // 她自己在想 —— 这一下由我们直接驱动，不再走通知器：托盘现在（正确地）
-          // 不把宠物算作"你的智能体"，于是她自己的回合不会再产生状态推送。
+          // 不把陪伴助手算作"你的智能体"，于是她自己的回合不会再产生状态推送。
           pet?.setState('running')
           if (rolled) {
-            // 忘掉这件事必须让人知道：否则宠物会显得莫名其妙地不记得昨天说过的话。
-            pet?.say(currentLocale() === 'zh' ? '新的一天啦，昨天的事 MIKU 忘光光咯' : 'New day~ yesterday is all gone', 3600)
+            // 忘掉这件事必须让人知道：否则她会显得莫名其妙地不记得昨天说过的话。
+            pet?.say(petLines().newDay, 3600)
           }
           return { ok: true }
         } catch (err) {
@@ -871,7 +885,7 @@ if (!app.requestSingleInstanceLock()) {
       const petAsk = (text) => petPrompt(text)
 
       /**
-       * 别的智能体干完一轮，宠物过来报一声。
+       * 别的智能体干完一轮，她过来报一声。
        *
        * 值不值得报、几件事该不该并成一句，都由 pet-announce 定 —— 那两条规则各自
        * 要等几十秒才能在真机上复现一次，放在能直接测的模块里。这里只负责说出来。
@@ -888,7 +902,7 @@ if (!app.requestSingleInstanceLock()) {
         // 看哪扇窗口和现在没关系。
         if (mainWindowFocused()) { pet.play('done'); return }
         const prefs = await readPetPrefs()
-        const text = composeAnnouncement(digests, prefs.nickname, currentLocale() === 'zh')
+        const text = composeAnnouncement(digests, prefs.nickname, petLines())
         if (text === '') return
         pet.play('done')
         pet.say(text, Math.min(20000, 6000 + digests.length * 2000), await speechFor(prefs, true, text))
@@ -897,7 +911,7 @@ if (!app.requestSingleInstanceLock()) {
       const announcer = createAnnouncer({ emit: (batch) => { void announceBatch(batch) } })
 
       /**
-       * 宠物自己说的话进气泡。
+       * 她自己说的话进气泡。
        *
        * 停留时长按字数给：一句"好"挂十几秒是碍事，三行总结给四秒又读不完。
        */
@@ -926,7 +940,7 @@ if (!app.requestSingleInstanceLock()) {
       const petObserver = createPetObserver({
         isPetSession: (id) => isOwnSession(id),
         onDigest: (digest) => {
-          // 宠物没开就没人看，不必攒。
+          // 她没开就没人看，不必攒。
           if (pet === undefined) return
           announcer.offer(digest)
         },
@@ -965,7 +979,7 @@ if (!app.requestSingleInstanceLock()) {
        * 页面画得出来了，这才把状态推过去。
        *
        * 以前是建完窗口立刻推，而那时页面还没加载完，消息没有接收方 —— 失败被
-       * executeJavaScript 的 catch 悄悄吞掉，于是开宠物时哪怕智能体正在跑，她也
+       * executeJavaScript 的 catch 悄悄吞掉，于是开她的时候哪怕智能体正在跑，她也
        * 一律是待机的。改由页面报到之后再推，"什么时候能收"由能收的那一方说了算。
        */
       // 设置面板改完之后会 ping /__pet/refresh，落到这里。
@@ -975,7 +989,7 @@ if (!app.requestSingleInstanceLock()) {
         pet?.setState(agentState)
         pet?.play('greet')   // 出场打个招呼
       })
-      // 开宠物挪到引导之后（见 showApp 那一段）：这里还读不到设置，先开出来会先
+      // 开陪伴助手这一步挪到引导之后（见 showApp 那一段）：这里还读不到设置，先开出来会先
       // 显示默认角色再跳到真正的那个，闪一下。
       // 菜单要等 setPet 定义之后再装：它把 setPet 作为回调交出去，早一步调用
       // 会撞上 const 的暂时性死区，整个启动直接抛错。
@@ -990,11 +1004,11 @@ if (!app.requestSingleInstanceLock()) {
       registerBridge()
       showApp()
 
-      // 先读出是谁，再把宠物开出来 —— 顺序反过来会先画默认角色再换，闪一下。
+      // 先读出是谁，再把陪伴助手开出来 —— 顺序反过来会先画默认角色再换，闪一下。
       await applyPetPrefs()
       if (petEnabled()) setPet(true)
 
-      // 扫一遍历史遗留的宠物会话，把它们从"未分组"里收起来。
+      // 扫一遍历史遗留的陪伴助手会话，把它们从"未分组"里收起来。
       //
       // 必须排在 startHarness 之后 —— 它要发 RPC，而在那之前 pipe 还是 null，
       // 调用会以 HTTP 0 失败。不 await：只关系到列表好不好看，不该让界面等它。
@@ -1009,8 +1023,8 @@ if (!app.requestSingleInstanceLock()) {
     }
   })
 
-  // 开了宠物模式就不随主窗口退出 —— 宠物本身就是这个应用在桌面上的存在，
-  // 关个窗口把它一起收走，等于让"后台陪着"这件事无从谈起。没开宠物时维持
+  // 开了陪伴助手就不随主窗口退出 —— 陪伴助手本身就是这个应用在桌面上的存在，
+  // 关个窗口把它一起收走，等于让"后台陪着"这件事无从谈起。没开陪伴助手时维持
   // 最不意外的行为：关掉即退出。
   app.on('window-all-closed', () => { if (!petEnabled()) app.quit() })
   app.on('before-quit', () => {

@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * 宠物动画调度的行为测试。
+ * 陪伴助手动画调度的行为测试。
  *
  * 调度器是内联在 pet.html 里的，所以这里把 <script> 块抠出来丢进 vm 跑，用假
  * 定时器把时间当数据推进 —— 否则光"闲置四分钟后打盹"这一条就要真等四分钟。
@@ -47,9 +47,16 @@ const advance = (ms) => {
 /* ── 假 DOM ─────────────────────────────────────────────────────────────── */
 let painted = { anim: null, frame: null }
 const ctx = { imageSmoothingEnabled: true, clearRect() {}, drawImage() {} }
+
+/** 真的记住加过哪些类。桩成"永远 false"的话，凡是先查再做的分支都验不到。 */
+const classList = () => {
+  const on = new Set()
+  return { add: (c) => { on.add(c) }, remove: (c) => { on.delete(c) }, contains: (c) => on.has(c) }
+}
+
 const el = () => ({
   addEventListener() {}, focus() {}, style: {}, value: '', textContent: '',
-  classList: { add() {}, remove() {}, contains: () => false },
+  classList: classList(),
   // 假的换行模型：每 30 个字一行、行高 22，加上下内边距 20。够用来断言"文字越多
   // 窗口越高"，不指望它和真实排版一致 —— 那需要一个真排版引擎。
   getBoundingClientRect() {
@@ -64,7 +71,7 @@ const nodes = { tank: el(), bubble: el(), panel: el(), input: el(), send: el(), 
 const sandbox = {
   document: {
     body: {
-      classList: { add() {}, remove() {}, contains: () => false },
+      classList: classList(),
       appendChild() {},
     },
     documentElement: { style: { setProperty() {} } },
@@ -250,7 +257,11 @@ async function main() {
     check('长文要更高的窗口', long[1] > short[1], `${long[1]} vs ${short[1]}`)
 
     // 收起时不带高度：那一档的内容是固定的，主进程按自己的下限来。
+    //
+    // 先把微任务放空再推时间：say 里的定时器要等那串 await 走完才注册，先 advance
+    // 的话它反而落在时间轴后面，一个 3 秒的气泡就这么挂到了后面的用例里。
     resizes.length = 0
+    await new Promise((r) => setImmediate(r))
     advance(4000)
     await new Promise((r) => setImmediate(r))
   }
@@ -284,7 +295,7 @@ async function main() {
     check('庄方宜被拎起来是惊讶', CHARACTERS.zhuang.roles.held === 'surprised')
     check('MIKU 被拎起来是害羞', CHARACTERS.miku.roles.held === 'shy')
 
-    // 认不得的角色 id 要回落，而不是把宠物弄成一张空画布。
+    // 认不得的角色 id 要回落，而不是把她弄成一张空画布。
     pushCharacter('天知道')
     await new Promise((r) => setImmediate(r))
     check('认不得的角色回落到默认', loaded.at(-1).dir === 'assets/miku', JSON.stringify(loaded.at(-1)))
@@ -292,6 +303,48 @@ async function main() {
     // 认不得的角色名不该画出别的东西来。
     pushPlay('天知道')
     check('认不得的角色名被忽略', painted.anim === 'idle', at())
+  }
+
+  console.log('13) 换角色把气泡和输入框腾干净')
+  {
+    // 这块地方一次只属于一位。上一位的话留在气泡里，换完人就成了新角色在说别人的
+    // 台词 —— 而她们各有各的会话，那句话在新角色的上下文里根本不存在。
+    const bubble = nodes.bubble
+    const body = sandbox.document.body
+
+    // say 里有一串 await（量高要先问过主进程），得先让它们走完，再推时间去触发
+    // 挂在 requestAnimationFrame 上的进场那一帧。setImmediate 不动假时钟，所以
+    // 后面按 ms 掐的那几个时刻不受影响。
+    await pushSay('这是上一位说的话', 30000)
+    await new Promise((r) => setImmediate(r))
+    advance(20)
+    check('先真的说上了', bubble.textContent === '这是上一位说的话' && body.classList.contains('bubbling'),
+      bubble.textContent)
+
+    // 半句还没发出去的提问也算：那是问上一位的。
+    nodes.input.value = '刚打了一半'
+
+    pushCharacter('zhuang')
+    await new Promise((r) => setImmediate(r))
+    check('气泡文字清了', bubble.textContent === '', bubble.textContent)
+    check('气泡收起来了', !body.classList.contains('bubbling') && bubble.classList.contains('hidden'))
+    check('没发出去的提问也清了', nodes.input.value === '', nodes.input.value)
+    check('窗口收回待机', resizes.at(-1)[0] === 'idle', JSON.stringify(resizes.at(-1)))
+
+    // 旧那句的定时器也得作废：不然它到点时会去收一个已经不存在的气泡，把新角色
+    // 刚说的话一起收掉 —— 那条话才刚说出口就凭空消失，而且只在换过角色之后才复现。
+    //
+    // 时刻是掐着算的：旧那条原定在 t=30000 到期，新这条在 t=30020。停在两者之间，
+    // 于是"还挂着"这个断言只有在旧定时器真的被清掉时才成立。
+    await pushSay('这是新角色说的话', 30000)   // 定在 t=20 那一刻，于是 t=30020 到期
+    await new Promise((r) => setImmediate(r))
+    advance(20)                                 // t=40，进场动画那一帧
+    advance(29970)                              // t=30010：过了旧的，没到新的
+    check('旧定时器没把新的话收走',
+      bubble.textContent === '这是新角色说的话' && body.classList.contains('bubbling'),
+      bubble.textContent)
+    advance(20)
+    check('新那条自己到点才收', !body.classList.contains('bubbling'))
   }
 
   console.log()

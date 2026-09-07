@@ -38,7 +38,7 @@ const check = (name, missing) => {
 
 console.log('1) 页面 → 主进程')
 {
-  // 两个 preload 一起算：主进程的监听器分属主窗和宠物窗，只比其中一个会误报。
+  // 两个 preload 一起算：主进程的监听器分属主窗和陪伴窗，只比其中一个会误报。
   const sent = uniq([
     ...grab(petPreload, /ipcRenderer\.(?:send|invoke)\('([^']+)'/g),
     ...grab(appPreload, /ipcRenderer\.(?:send|invoke)\('([^']+)'/g),
@@ -49,7 +49,7 @@ console.log('1) 页面 → 主进程')
   check('主进程接的，preload 都发得出', diff(heard, sent))
 }
 
-console.log('2) 主进程 → 宠物页面')
+console.log('2) 主进程 → 陪伴助手页面')
 {
   const sent = grab(petJs, /send\('([^']+)'/g)
   const heard = grab(petPreload, /ipcRenderer\.on\('([^']+)'/g)
@@ -65,12 +65,12 @@ console.log('3) preload 暴露的接口，页面真的用得上')
   check('页面用了却没暴露', diff(used, exposed))
 }
 
-console.log('4) 宠物窗不该拿到主窗的桥')
+console.log('4) 陪伴窗不该拿到主窗的桥')
 {
-  // 宠物窗开着 sandbox，桥再窄越好。主窗那套 stream/unary 通道要是漏进来，
+  // 陪伴窗开着 sandbox，桥再窄越好。主窗那套 stream/unary 通道要是漏进来，
   // 等于给一个浮在所有窗口之上的小页面开了直连后端的口子。
   const petChannels = grab(petPreload, /ipcRenderer\.(?:send|invoke|on)\('([^']+)'/g)
-  check('宠物 preload 只有 dsh:pet-* 通道', petChannels.filter((c) => !c.startsWith('dsh:pet-')))
+  check('陪伴助手 preload 只有 dsh:pet-* 通道', petChannels.filter((c) => !c.startsWith('dsh:pet-')))
 }
 
 console.log()

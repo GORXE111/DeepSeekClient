@@ -3,7 +3,7 @@
 /**
  * 决定「这一轮值不值得吱一声」，以及「几件事该合成一句还是分开说」。
  *
- * 没有这一层的时候，别的智能体每收工一轮宠物就弹一次气泡。连着问几个小问题，
+ * 没有这一层的时候，别的智能体每收工一轮她就弹一次气泡。连着问几个小问题，
  * 就是连着三四个气泡糊在屏幕角上 —— 而且后一个会把前一个顶掉，等于一条都没
  * 看清。提醒的价值来自稀缺，每轮都提醒等于没提醒。
  *
@@ -113,7 +113,7 @@ function createAnnouncer({
     return true
   }
 
-  /** 立刻把攒着的说掉（应用要退出、或用户主动点了宠物时用）。 */
+  /** 立刻把攒着的说掉（应用要退出、或用户主动点了她时用）。 */
   const flush = () => {
     if (timer !== null) { clearTimer(timer); timer = null }
     fire()
@@ -152,36 +152,40 @@ function brief(prompt) {
 }
 
 /**
- * 拼出宠物要说的那句话。
+ * 拼出陪伴助手要说的那句话。
  *
  * 只报事实：任务是什么（你自己提的那句话，不可能错）、它完成了。**不经过模型** ——
- * 早先是把那一轮的问答喂给宠物让它转述，结果总结与实际不符：一个小模型隔着一份被
+ * 早先是把那一轮的问答喂给她让她转述，结果总结与实际不符：一个小模型隔着一份被
  * 截断的素材去转述另一个模型的工作，说错是常态而不是意外，而说错的代价是你以为
  * 任务成了。要看内容就去主界面，那里有完整原文。
  *
+ * 措辞不在这里，由调用方按当前角色取（见 renderer/pet-characters.js 的 LINES）。
+ * 这里管的是**说不说、报几件、怎么列**；那边管的是**用谁的腔调说**。写死在这里的
+ * 时候，庄方宜会用 MIKU 的口吻说"搞定啦~"—— 气泡里分不出哪句是模型说的、哪句是
+ * 壳说的，串味就串在这一句上。
+ *
  * @param {object[]} digests 这一批收工的事，至少一条
  * @param {string} nickname 用户设的昵称；空串表示不称呼
- * @param {boolean} zh 是否中文
+ * @param {import('../renderer/pet-characters.js').Lines} lines 当前角色的台词
  * @returns {string} 气泡文本；没有可说的返回空串
  */
-function composeAnnouncement(digests, nickname, zh) {
+function composeAnnouncement(digests, nickname, lines) {
   const list = Array.isArray(digests) ? digests : []
   if (list.length === 0) return ''
   // 编一个占位（"用户""你好"）比不称呼更糟。
-  const address = nickname === '' ? '' : (zh ? `${nickname}，` : `${nickname}, `)
+  const address = nickname === '' ? '' : lines.address(nickname)
 
   if (list.length === 1) {
     const one = brief(list[0]?.prompt)
-    if (one === '') return address + (zh ? '刚才那轮任务搞定啦~' : 'that task is done~')
-    return address + (zh ? `你的「${one}」任务搞定啦~` : `your task “${one}” is done~`)
+    return address + (one === '' ? lines.doneOne : lines.doneNamed(one))
   }
 
-  const head = address + (zh ? `你的 ${list.length} 个任务都搞定啦~` : `all ${list.length} of your tasks are done~`)
+  const head = address + lines.doneMany(list.length)
   const names = list.map((d) => brief(d?.prompt)).filter((b) => b !== '')
   if (names.length === 0) return head
   const shown = names.slice(0, MAX_LISTED).map((b) => `· ${b}`)
   const rest = names.length - shown.length
-  if (rest > 0) shown.push(zh ? `· 还有 ${rest} 件` : `· and ${rest} more`)
+  if (rest > 0) shown.push(`· ${lines.doneRest(rest)}`)
   return [head, ...shown].join(String.fromCharCode(10))
 }
 

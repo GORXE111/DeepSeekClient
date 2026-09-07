@@ -122,7 +122,7 @@ async function fetchSpeech(cfg, text, deps = {}) {
     const buf = Buffer.from(await response.arrayBuffer())
     if (buf.length === 0) return { ok: false, error: '服务没有返回音频' }
     if (buf.length > MAX_BYTES) return { ok: false, error: '返回的音频过大' }
-    // 走 data URI 而不是临时文件：宠物窗是 file:// 源，读不到我们写在别处的文件，
+    // 走 data URI 而不是临时文件：陪伴窗是 file:// 源，读不到我们写在别处的文件，
     // 而一句提醒的音频只有几十 KB，塞进一条 IPC 消息完全够用。
     return { ok: true, dataUri: `data:${MIME[format]};base64,${buf.toString('base64')}` }
   } catch (err) {

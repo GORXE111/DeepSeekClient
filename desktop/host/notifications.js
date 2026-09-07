@@ -15,7 +15,7 @@
  *     判断，每次启动都会收到一串假的完成通知。
  *  3. **审批与提问不受第 2 条约束**，它们本身就是"需要你现在处理"。
  *
- * 宠物那条会话不算数。她不是"你的智能体"：跟桌面摆件说句话不该让托盘显示成
+ * 陪伴助手那条会话不算数。她不是"你的智能体"：跟桌面摆件说句话不该让托盘显示成
  * 忙碌，更不该在她答完之后弹一条"任务已完成"。少了这道过滤，问她一句"在吗"
  * 就会收到一条系统通知说你的智能体干完活了。
  *
@@ -47,9 +47,9 @@ const TEXT = {
  * @param {object} deps
  * @param {() => import('electron').BrowserWindow | null} deps.getWindow 取当前窗口
  * @param {() => 'zh' | 'en'} deps.getLocale 取界面语言，通知也要跟着走
- * @param {(state: 'idle' | 'running' | 'attention') => void} [deps.onState] 状态变化（托盘与宠物用）
- * @param {(kind: string, detail?: string) => void} [deps.onSay] 同一个事件也让宠物说一句
- * @param {(sessionId: string) => boolean} [deps.isPetSession] 认出宠物自己那条会话，整条忽略
+ * @param {(state: 'idle' | 'running' | 'attention') => void} [deps.onState] 状态变化（托盘与陪伴助手用）
+ * @param {(kind: string, detail?: string) => void} [deps.onSay] 同一个事件也让陪伴助手说一句
+ * @param {(sessionId: string) => boolean} [deps.isPetSession] 认出陪伴助手自己那条会话，整条忽略
  */
 function createNotifier({ getWindow, getLocale, onState, onSay, isPetSession = () => false }) {
   /**
@@ -74,7 +74,7 @@ function createNotifier({ getWindow, getLocale, onState, onSay, isPetSession = (
   }
 
   const notify = (kind, arg) => {
-    // 宠物不受"窗口有焦点就闭嘴"的约束：人就在屏幕前时，系统通知反而容易被
+    // 陪伴助手不受"窗口有焦点就闭嘴"的约束：人就在屏幕前时，系统通知反而容易被
     // 忽略，桌面角落有个小人开口说话是更合适的提醒方式。
     onSay?.(kind, arg)
     if (focused()) return

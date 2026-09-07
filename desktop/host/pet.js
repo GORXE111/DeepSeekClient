@@ -1,10 +1,10 @@
 'use strict'
 
 /**
- * 悬浮宠物窗：一个常驻在桌面上的小圆点，用颜色和动作说明 agent 在干什么。
+ * 悬浮陪伴窗：一个常驻在桌面上的小圆点，用颜色和动作说明 agent 在干什么。
  *
- * 它是托盘状态的"看得见的化身"—— 托盘要你去屏幕角落找，宠物就浮在手边。两者
- * 共用同一份状态，不各自推断，否则迟早会出现"托盘说在跑、宠物说空闲"。
+ * 它是托盘状态的"看得见的化身"—— 托盘要你去屏幕角落找，她就浮在手边。两者
+ * 共用同一份状态，不各自推断，否则迟早会出现"托盘说在跑、她说空闲"。
  *
  * **默认关闭**。一个会浮在别人所有窗口之上的东西，不该是装完就自己冒出来的；
  * 想要的人去菜单里开。
@@ -46,8 +46,8 @@ const LABELS = {
  * @param {object} deps
  * @param {string} deps.desktopDir 壳的根目录（用来找 renderer/pet.html）
  * @param {() => 'zh' | 'en'} deps.getLocale
- * @param {() => void} deps.onActivate 点击宠物时做什么（通常是显示主窗口）
- * @param {() => void} deps.onFreshTopic 在宠物专属工作区里另起一个会话
+ * @param {() => void} deps.onActivate 点击她时做什么（通常是显示主窗口）
+ * @param {() => void} deps.onFreshTopic 在陪伴助手专属工作区里另起一个会话
  * @param {{x: number, y: number} | undefined} deps.position 上次的位置
  * @param {(pos: {x: number, y: number}) => void} deps.onMoved 位置变化时落盘
  * @param {string} deps.characterId 一开始用哪个角色
@@ -99,7 +99,7 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
    *
    * 必须由移动本身驱动，不能只挂 `moved` 事件 —— Windows 上程序化的
    * `setPosition` **不发** `moved`，而自绘拖拽全靠 setPosition。只听事件的话，
-   * 拖到哪里都不会记住，重启后宠物弹回原处，而且过程里没有任何报错。
+   * 拖到哪里都不会记住，重启后她弹回原处，而且过程里没有任何报错。
    */
   let persistTimer
   const schedulePersist = () => {
@@ -131,7 +131,7 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
 
   const showMenu = () => {
     const t = LABELS[getLocale()] ?? LABELS.en
-    // 刻意不放"关闭宠物模式"：右键是高频误触区，把宠物弄丢的代价远大于
+    // 刻意不放"关闭陪伴助手"：右键是高频误触区，把她弄丢的代价远大于
     // 省下一次去主菜单的路。关闭入口只留在应用菜单里。
     Menu.buildFromTemplate([
       { label: t.open, click: onActivate },
@@ -160,7 +160,7 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
       const size = { width: base.width, height: wanted }
       const old = win.getBounds()
 
-      // 让宠物本人待在原地。她在窗口里是垂直居中的，所以窗口长高时若左上角不动，
+      // 让她本人待在原地。她在窗口里是垂直居中的，所以窗口长高时若左上角不动，
       // 她会跟着往下滑 —— 一边说话一边往下挪，看着像在漏气。补一半高度差回去。
       let x = old.x
       let y = old.y + Math.round((old.height - size.height) / 2)
@@ -186,7 +186,7 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
      * 己算，收益是拖拽期间的表现完全归页面管。
      *
      * 收增量而不是绝对坐标：窗口在拖动中不断移动，页面若用窗口内坐标推算目标位
-     * 置，每一帧都会和上一帧的移动叠加，宠物会自己飞走。
+     * 置，每一帧都会和上一帧的移动叠加，她会自己飞走。
      */
     moveBy: (dx, dy) => {
       if (win.isDestroyed()) return
@@ -196,7 +196,7 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
     },
 
     /**
-     * 让宠物说一句话。
+     * 让她说一句话。
      *
      * `speech` 跟着这一条一起走，而不是另开一条"当前语音设置"的通道：那样就得
      * 操心什么时候刷新、刷新失败怎么办，而随消息下发天然永远是最新的。
@@ -215,7 +215,7 @@ function createPet({ desktopDir, getLocale, onActivate, onFreshTopic, position, 
      *
      * 与 setState 分开：状态是"她现在处于什么情形"，会一直持续；这里是"刚刚发生了
      * 一件事"，放一轮就该回到原样。混成一个通道就得让调用方自己记得复位，而漏掉一
-     * 次复位，宠物就永远停在鼓掌上了。
+     * 次复位，她就永远停在鼓掌上了。
      */
     play: (anim) => { send('dsh:pet-play', String(anim ?? '')) },
 

@@ -1,9 +1,9 @@
 'use strict'
 
 /**
- * 宠物窗口几何的测试：三档尺寸切换、气泡按内容长高、以及别把自己顶出屏幕。
+ * 陪伴窗口几何的测试：三档尺寸切换、气泡按内容长高、以及别把自己顶出屏幕。
  *
- * 这些在真机上只能靠眼睛看，而且要凑齐条件 —— "把宠物拖到屏幕最下面再让她说一段
+ * 这些在真机上只能靠眼睛看，而且要凑齐条件 —— "把她拖到屏幕最下面再让她说一段
  * 长话"这种情形，手动复现一次要半分钟，还看不出差了几个像素。
  *
  * electron 在这里换成替身：BrowserWindow 只记录 setBounds 收到了什么，screen 返回
@@ -71,7 +71,7 @@ const check = (name, cond, extra = '') => {
   else { fail++; console.log('  FAIL ' + name + (extra === '' ? '' : '  → ' + extra)) }
 }
 
-/** 建一只宠物，放在给定位置。 */
+/** 建一个陪伴助手，放在给定位置。 */
 function setup(position = { x: 800, y: 400 }) {
   const pet = createPet({
     desktopDir: path.join(__dirname, '..'),
@@ -84,7 +84,7 @@ function setup(position = { x: 800, y: 400 }) {
   return { pet, win: lastWindow }
 }
 
-/** 宠物在窗口里垂直居中，所以她的视觉中心就是窗口中心。 */
+/** 她在窗口里垂直居中，所以她的视觉中心就是窗口中心。 */
 const centerY = (b) => b.y + b.height / 2
 
 console.log('1) 三档尺寸')
@@ -116,7 +116,7 @@ console.log('2) 气泡高度跟着内容走')
 console.log('3) 高度的上下限')
 {
   const { pet, win } = setup()
-  // 下限是宠物本身那么高：再矮就把她裁掉了。
+  // 下限是她本身那么高：再矮就把她裁掉了。
   pet.resize('bubble', 20)
   check('短句子也不低于 144', win.bounds.height === 144, String(win.bounds.height))
 
@@ -130,7 +130,7 @@ console.log('3) 高度的上下限')
   check('没给高度也回落到下限', win.bounds.height === 144, String(win.bounds.height))
 }
 
-console.log('4) 长高的时候宠物待在原地')
+console.log('4) 长高的时候她待在原地')
 {
   // 她在窗口里垂直居中。窗口长高时若左上角不动，她会跟着往下滑 —— 一边说话一边
   // 往下挪，看着像在漏气。

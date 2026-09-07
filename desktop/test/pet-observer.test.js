@@ -4,7 +4,7 @@
  * 旁观器的行为测试。
  *
  * 这里验的每一条都对应一次踩过的坑或一处会静默出错的地方：收工判据用错会让摘要
- * 永远是空的，素材不清会慢慢泄漏，而两者在真机上都不报错 —— 只是宠物说得不对，
+ * 永远是空的，素材不清会慢慢泄漏，而两者在真机上都不报错 —— 只是她说得不对，
  * 或者内存慢慢涨。
  *
  * 用法：node desktop/test/pet-observer.test.js
@@ -56,7 +56,7 @@ console.log('1) 一轮走完，攒出一份素材')
 console.log('2) 收工判据是 turn/end，不是 assistant/message')
 {
   // 这条是真出过事的：早先用 host/session-status 的 running=false 触发，它走另一
-  // 条流、会跑在 assistant/message 前面，于是摘要里的回答永远是空的，宠物一本
+  // 条流、会跑在 assistant/message 前面，于是摘要里的回答永远是空的，她一本
   // 正经地报告"那位智能体一个字没吐"。
   const { obs, digests } = setup()
   obs.observe(frame('a', userMsg('问题')))
@@ -66,7 +66,7 @@ console.log('2) 收工判据是 turn/end，不是 assistant/message')
   check('turn/end 才出，且带着回答', digests.length === 1 && digests[0].answer === '答案')
 }
 
-console.log('3) 宠物自己那条会话不进素材')
+console.log('3) 陪伴助手自己那条会话不进素材')
 {
   const { obs, digests } = setup({ isPetSession: (id) => id === 'pet' })
   obs.observe(frame('pet', userMsg('你好')))

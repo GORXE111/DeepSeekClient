@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <title>DeepSeek Client</title>
 <style>
-  /* 像素宠物。
-     宠物是 64×64 的序列帧整数放大的（见 pet-sprite.js），不是矢量图缩放 ——
+  /* 像素小人。
+     她是 64×64 的序列帧整数放大的（见 pet-sprite.js），不是矢量图缩放 ——
      后者放大后边缘会被插值糊掉，那就不是像素风了。
 
      窗口尺寸永远贴着可见内容（三档：静默 / 冒泡 / 展开）。透明区域一样会拦住
@@ -70,7 +70,7 @@
     transform-origin: left center;
     transition: opacity 160ms ease, transform 200ms cubic-bezier(.2,.9,.3,1.25);
   }
-  /* 气泡也走像素风：直角 + 硬边描边，圆角会和宠物打架。 */
+  /* 气泡也走像素风：直角 + 硬边描边，圆角会和她打架。 */
   .bubble {
     /* 总结可能长过气泡：让它滚而不是裁掉。裁掉是无声的信息丢失，滚动至少
        让人知道下面还有。 */
@@ -227,7 +227,7 @@
 
   /* ── 打盹 ───────────────────────────────────────────────────────────────
      长时间没人理就切到 sleepy。只在 idle 底色上生效：智能体正在跑的时候
-     宠物去睡觉，等于把最该看的状态藏起来了。 */
+     她去睡觉，等于把最该看的状态藏起来了。 */
 
   const NAP_AFTER = 4 * 60 * 1000
   let napTimer = null
@@ -293,18 +293,21 @@
     }, wait)
   }
 
-  // 素材是异步解码的，加载完再画第一帧 —— 否则首帧是一张空画布。
-  // 画得出来了才报到：主进程收到 ready 就会把当前状态推过来，早报到等于让那一
-  // 帧落在还没解码完的画布上。
   /**
-   * 换一个角色：重新加载素材，回到待机。
+   * 换一个角色：清空她说过的话，重新加载素材，回到待机。
    *
    * 素材整套换掉而不是增量补：两个角色的动画名有重叠（都有 idle），留着上一套的
    * 图会在新角色缺某张时悄悄画出前一个角色 —— 那种错比缺图更难查。
    *
+   * 气泡和输入框一并清掉，理由是同一条：**这块地方一次只属于一位。** 上一位的话
+   * 留在气泡里，换完人就成了新角色在说别人的台词 —— 而她们各有各的会话，那句话在
+   * 新角色的上下文里根本不存在，追问一句"你刚才说的"只会得到一脸茫然。半句没发出
+   * 去的提问同理：那是问上一位的，不该被新角色接走。
+   *
    * @param {string} id 角色 id
    */
   const useCharacter = async (id) => {
+    silence()
     who = character(id)
     base = 'idle'
     shot = null
@@ -317,13 +320,7 @@
     scheduleFlourish()
   }
 
-  // 素材是异步解码的，加载完再画第一帧 —— 否则首帧是一张空画布。
-  // 画得出来了才报到：主进程收到 ready 就会把当前状态推过来，早报到等于让那一
-  // 帧落在还没解码完的画布上。
-  void useCharacter(new URLSearchParams(location.search).get('who') ?? '')
-    .then(() => { window.__dshPet?.ready() })
-
-  // 主进程 → 页面的三条推送。函数体仍挂在 window 上：它们是这个页面的对外接口，
+  // 主进程 → 页面的四条推送。函数体仍挂在 window 上：它们是这个页面的对外接口，
   // 测试直接调它们来驱动，不必绕一圈假 IPC。
   window.__dshPet?.onState((s) => { window.__dshPetState(s) })
   window.__dshPet?.onCharacter?.((id) => { void useCharacter(id) })
@@ -331,7 +328,7 @@
   window.__dshPet?.onSay((t, ms, speech) => { void window.__dshPetSay(t, ms, speech) })
 
   /**
-   * 状态由主进程推送：宠物、托盘、通知看同一份状态，不各自推断。
+   * 状态由主进程推送：她、托盘、通知看同一份状态，不各自推断。
    */
   window.__dshPetState = (next) => {
     const state = next ?? 'idle'
@@ -354,7 +351,7 @@
      用一把离屏的尺子量，而不是"先撑大窗口再读实际高度"：后者要两次 resize，
      中间那一帧是撑大了但还没填满的空窗口，闪得很明显。 */
 
-  /** 气泡的外框宽度。跟 CSS 算出来的一致：480 − 8×2 内边距 − 10 间隙 − 128 宠物。 */
+  /** 气泡的外框宽度。跟 CSS 算出来的一致：480 − 8×2 内边距 − 10 间隙 − 128 人物。 */
   const BUBBLE_W = 326
 
   /** body 的上下内边距，量出来的是气泡高度，窗口还要把它算进去。 */
@@ -375,7 +372,7 @@
   /**
    * 这句话要多高的窗口。
    * @param {string} text 气泡文本
-   * @returns {number} 窗口高度（像素）；不低于宠物本身那么高
+   * @returns {number} 窗口高度（像素）；不低于她本身那么高
    */
   const heightFor = (text) => {
     ruler.textContent = text
@@ -442,6 +439,30 @@
   }
 
   /**
+   * 把这块地方腾干净：气泡、还没到点的那个定时器、以及展开着的输入框。
+   *
+   * 换角色时用（见 useCharacter）。不走 hideBubble / setOpen 那两条路，因为它们都
+   * 带 200ms 的退场动画 —— 那期间新角色已经画上了，而旧的那句话还挂在她嘴边，正是
+   * 要避免的样子。换人是硬切，不是过渡。
+   *
+   * 没在显示什么就不动窗口：开机时也会走这里，那时窗口本来就是待机大小，白发一次
+   * IPC 没有意义。
+   */
+  const silence = () => {
+    const showing = open || body.classList.contains('bubbling')
+    clearTimeout(bubbleTimer)
+    body.classList.remove('bubbling')
+    bubble.classList.add('hidden')
+    bubble.textContent = ''
+    open = false
+    body.classList.remove('open')
+    panel.classList.add('hidden')
+    input.value = ''
+    send.disabled = true
+    if (showing) void window.__dshPet?.resize('idle')
+  }
+
+  /**
    * 展开与收起。顺序有讲究：展开先放大窗口、下一帧再加 class，否则浏览器会把
    * 尺寸变化和 class 合成一次布局，动画直接被跳过；收起反过来，先播退场再缩窗口。
    */
@@ -468,16 +489,16 @@
   }
 
   /**
-   * 按住宠物拖动。
+   * 按住她拖动。
    *
    * 自绘而不是交给 `-webkit-app-region: drag`：系统拖拽会把鼠标事件整个吞掉，页面
    * 因此不知道自己正被拖，也就播不了被拎起来的动画。
    *
    * 用指针捕获而不是在 window 上听 mousemove：拖动中光标经常跑到这个小窗口之外，
-   * 没有捕获就会中途断流，宠物卡在半路。
+   * 没有捕获就会中途断流，她卡在半路。
    *
    * 传增量而不是绝对坐标：窗口本身在跟着移动，用窗口内坐标推算目标位置会和上一帧
-   * 的位移叠加，宠物会自己飞出屏幕。
+   * 的位移叠加，她会自己飞出屏幕。
    */
   const DRAG_SLOP = 4
   let drag = null
@@ -544,6 +565,18 @@
     if (e.key === 'Escape') { e.preventDefault(); void setOpen(false) }
   })
   window.addEventListener('blur', () => { if (open) void setOpen(false) })
+
+  /* ── 开场 ───────────────────────────────────────────────────────────────
+     素材是异步解码的，加载完再画第一帧 —— 否则首帧是一张空画布。画得出来了才报
+     到：主进程收到 ready 就会把当前状态推过来，早报到等于让那一帧落在还没解码完
+     的画布上。
+
+     排在最后一行，是因为 useCharacter 现在要先清一遍气泡与输入框，而那几个东西
+     （bubbleTimer、open、silence）都是本文件靠后声明的 const/let。摆在中间就会在
+     开机那一次调用里撞上暂时性死区 —— 抛在这里的错没人接，表现是整个页面一片空
+     白，而控制台里只有一行看不出所以然的 ReferenceError。 */
+  void useCharacter(new URLSearchParams(location.search).get('who') ?? '')
+    .then(() => { window.__dshPet?.ready() })
 </script>
 </body>
 </html>

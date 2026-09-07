@@ -13,6 +13,12 @@ const {
   createAnnouncer, isWorthAnnouncing, composeAnnouncement, brief,
   MIN_DURATION_MS, MIN_ANSWER_CHARS,
 } = require('../host/pet-announce.js')
+const { linesOf } = require('../renderer/pet-characters.js')
+
+/** 措辞跟着角色走，所以断言也得指明是谁在说。 */
+const MIKU_ZH = linesOf('miku', true)
+const MIKU_EN = linesOf('miku', false)
+const ZHUANG_ZH = linesOf('zhuang', true)
 
 /* ── 假定时器 ───────────────────────────────────────────────────────────── */
 function makeClock() {
@@ -163,30 +169,58 @@ console.log('7) flush 和 cancel')
 console.log('8) 说出来的那句话')
 {
   const one = [{ prompt: '把登录模块重构一下' }]
-  check('一件事 + 昵称', composeAnnouncement(one, '老大', true) === '老大，你的「把登录模块重构一下」任务搞定啦~',
-    composeAnnouncement(one, '老大', true))
-  check('没设昵称就不称呼', composeAnnouncement(one, '', true).startsWith('你的「'),
-    composeAnnouncement(one, '', true))
-  check('英文', composeAnnouncement([{ prompt: 'refactor login' }], 'boss', false).includes('boss, your task'),
-    composeAnnouncement([{ prompt: 'refactor login' }], 'boss', false))
+  check('一件事 + 昵称', composeAnnouncement(one, '老大', MIKU_ZH) === '老大，你的「把登录模块重构一下」任务搞定啦~',
+    composeAnnouncement(one, '老大', MIKU_ZH))
+  check('没设昵称就不称呼', composeAnnouncement(one, '', MIKU_ZH).startsWith('你的「'),
+    composeAnnouncement(one, '', MIKU_ZH))
+  check('英文', composeAnnouncement([{ prompt: 'refactor login' }], 'boss', MIKU_EN).includes('boss, your task'),
+    composeAnnouncement([{ prompt: 'refactor login' }], 'boss', MIKU_EN))
 
   const three = [{ prompt: '甲' }, { prompt: '乙' }, { prompt: '丙' }]
-  const t = composeAnnouncement(three, '老大', true)
+  const t = composeAnnouncement(three, '老大', MIKU_ZH)
   check('多件事报总数', t.startsWith('老大，你的 3 个任务都搞定啦~'), t)
   check('多件事逐条列出', t.includes('· 甲') && t.includes('· 乙') && t.includes('· 丙'), t)
 
   const many = Array.from({ length: 7 }, (_, i) => ({ prompt: 'T' + i }))
-  const m = composeAnnouncement(many, '', true)
+  const m = composeAnnouncement(many, '', MIKU_ZH)
   check('最多列 4 条', (m.match(/· T/g) ?? []).length === 4, m)
   check('剩下的带过', m.includes('· 还有 3 件'), m)
 
-  check('空数组返回空串', composeAnnouncement([], '老大', true) === '')
-  check('非数组不炸', composeAnnouncement(null, '老大', true) === '')
-  check('提问是空的也说得出话', composeAnnouncement([{ prompt: '   ' }], '老大', true) === '老大，刚才那轮任务搞定啦~',
-    composeAnnouncement([{ prompt: '   ' }], '老大', true))
+  check('空数组返回空串', composeAnnouncement([], '老大', MIKU_ZH) === '')
+  check('非数组不炸', composeAnnouncement(null, '老大', MIKU_ZH) === '')
+  check('提问是空的也说得出话', composeAnnouncement([{ prompt: '   ' }], '老大', MIKU_ZH) === '老大，刚才那轮任务搞定啦~',
+    composeAnnouncement([{ prompt: '   ' }], '老大', MIKU_ZH))
 }
 
-console.log('9) 短标题')
+/* ── 4. 谁在说 ──────────────────────────────────────────────────────────
+   这句话不经过模型，是壳自己拼的，但一样从她嘴里冒出来。写死一套措辞的时候，
+   庄方宜会用 MIKU 的腔调报喜 —— 而气泡里看不出哪句是模型说的、哪句是壳说的。 */
+console.log('9) 措辞跟着角色走')
+{
+  const one = [{ prompt: '把登录模块重构一下' }]
+  const miku = composeAnnouncement(one, '老大', MIKU_ZH)
+  const zhuang = composeAnnouncement(one, '老大', ZHUANG_ZH)
+  check('两位说的不是同一句', miku !== zhuang, `${miku} / ${zhuang}`)
+  check('MIKU 带语气词', miku.endsWith('搞定啦~'), miku)
+  check('庄方宜不带语气词', zhuang.endsWith('办完了') && !zhuang.includes('~'), zhuang)
+  check('两位都称呼得上', miku.startsWith('老大，') && zhuang.startsWith('老大，'), zhuang)
+
+  const many = Array.from({ length: 7 }, (_, i) => ({ prompt: 'T' + i }))
+  const m = composeAnnouncement(many, '', ZHUANG_ZH)
+  check('庄方宜也会列条目', (m.match(/· T/g) ?? []).length === 4, m)
+  check('庄方宜也会带过剩下的', m.includes('· 还有 3 件'), m)
+
+  // 壳的另外几句同理：跨天翻篇那句里 MIKU 会自称 MIKU，换了人还这么说就露馅了。
+  check('MIKU 跨天那句自称 MIKU', MIKU_ZH.newDay.includes('MIKU'), MIKU_ZH.newDay)
+  check('庄方宜跨天那句不提 MIKU', !ZHUANG_ZH.newDay.includes('MIKU'), ZHUANG_ZH.newDay)
+  check('两位的换话题不是同一句', MIKU_ZH.fresh !== ZHUANG_ZH.fresh)
+  check('庄方宜的报错不冒充 MIKU', !ZHUANG_ZH.noSession.includes('MIKU'), ZHUANG_ZH.noSession)
+
+  // 认不得的角色 id 要回落到默认那位，而不是给出一个没有台词的空壳。
+  check('认不得的角色回落到 MIKU 的台词', linesOf('天知道', true).fresh === MIKU_ZH.fresh)
+}
+
+console.log('10) 短标题')
 {
   check('折掉换行', brief('第一行\n第二行') === '第一行 第二行', brief('第一行\n第二行'))
   check('超长截断加省略号', brief('啊'.repeat(40)) === '啊'.repeat(22) + '…')

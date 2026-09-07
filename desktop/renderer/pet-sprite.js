@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * 宠物的序列帧绘制器。
+ * 陪伴助手的序列帧绘制器。
  *
  * 每条动画 4 帧、单帧 64×64、背景透明。加载哪一套由角色决定（见
  * `pet-characters.js`）—— 这里只认"目录 + 动画名"，不知道有几个角色。
@@ -44,7 +44,7 @@ function load(def, anims) {
     const src = `${def.dir}/${anim}.png`
     const img = new Image()
     img.onload = () => { next.set(anim, img); resolve() }
-    // 少一张就少一条动画，不该让整只宠物起不来。
+    // 少一张就少一条动画，不该让她整个起不来。
     img.onerror = () => { console.error('[pet] 素材加载失败:', src); failed.push(anim); resolve() }
     img.src = src
   })

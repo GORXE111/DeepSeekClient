@@ -36,6 +36,15 @@ dist/        产物：安装包（不入库）
 原来那条说。工作目录分别是 `~/.dsh/pet/miku` 与 `~/.dsh/pet/zhuang`；人设分别是
 `pet` 与 `pet-zhuang` 两个 agent 预设（在预设列表里显示为「MIKU」和「庄方宜」）。
 
+**气泡这块地方也一次只属于一位。** 换角色时会把气泡里那句话和输入框里没发出去的半句
+一起清掉 —— 留着就成了新角色在说别人的台词，而那句话在她的上下文里根本不存在，追问
+一句"你刚才说的"只会得到一脸茫然。
+
+壳自己要说的那几句（报喜、换话题、跨天翻篇）不经过模型，但一样从她嘴里冒出来，所以
+也**跟着角色走**：同一件事办完，MIKU 说"搞定啦~"，庄方宜说"办完了"。这几句都在
+[`desktop/renderer/pet-characters.js`](desktop/renderer/pet-characters.js) 的 `LINES`
+里，和动画表放在一起 —— 加一位角色 = 加一条记录 + 一份台词 + 一个素材目录。
+
 形象授权见 [desktop/renderer/assets/README.md](desktop/renderer/assets/README.md) ——
 初音未来属 Crypton Future Media（**CC BY-NC**），庄方宜属上海鹰角网络（同人二次创作）。
 **本项目转为商业分发前必须另行取得授权，或换掉这两套形象。**
