@@ -209,7 +209,13 @@ export class WorkspaceRuntime implements IWorkspaces {
   async pickDirectory(): Promise<string | null> {
     const response = await this.api.host.pickDirectory({})
     if (!response.result.ok) {
-      throw new Error(`directory picker failed: ${response.result.error.message}`)
+      // The Host's message already says what failed and how ("directory
+      // picker failed: ...", "directory picker was aborted", "needs the
+      // native capability"). Prefixing it here produced the doubled
+      // "directory picker failed: directory picker failed: ..." the UI
+      // showed, which pushed the part that identifies the fault off the end
+      // of the line.
+      throw new Error(response.result.error.message)
     }
     return response.result.value.path
   }

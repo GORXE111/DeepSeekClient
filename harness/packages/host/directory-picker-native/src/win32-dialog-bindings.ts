@@ -25,20 +25,54 @@ interface Koffi {
   register(fn: (...args: unknown[]) => unknown, type: unknown): unknown
   unregister(callback: unknown): void
   sizeof(type: string): number
-  view(ref: unknown, len: number): ArrayBuffer
 }
 
 /**
- * Read a NUL-terminated UTF-16 string at a native address. koffi's
- * `_Out_ void **` out-params surface a raw address, and
- * `koffi.decode(addr, 'str16')` would dereference it as a pointer — crash
- * on real Windows — so view the memory directly instead.
+ * Longest path `SIGDN_FILESYSPATH` can hand back: Windows extended-length
+ * paths stop at 32767 characters. A bound is required because the only thing
+ * marking the end of the string is the NUL, and a missing one would otherwise
+ * walk the heap forever.
+ */
+const MAX_PATH_UNITS = 32767
+
+/**
+ * Read a NUL-terminated UTF-16 string at a native address.
+ *
+ * One code unit at a time, stopping at the NUL. That is deliberate on both
+ * counts:
+ *
+ * `koffi.view()` is not an option. It builds an external ArrayBuffer over
+ * arbitrary process memory (`napi_create_external_arraybuffer`), which
+ * Electron's V8 refuses — its sandbox requires every backing store to live
+ * inside the memory cage. koffi then cannot even construct the error it
+ * wants to throw, so it calls `napi_fatal_error`: the process aborts with
+ * exit code 134, no exception, no stack the caller can catch. Under plain
+ * Node the same call works, which is why this only ever failed in the
+ * packaged desktop app.
+ *
+ * Reading a whole block with `koffi.decode(address, 'char16_t', n)` works
+ * under Electron but copies eagerly, so any `n` past the NUL reads memory
+ * the COM allocation does not own — a fault waiting for the string to land
+ * near the end of a committed page. Per-unit reads never touch a byte past
+ * the terminator. A path is a few hundred units, and this runs once per
+ * pick, so the FFI overhead does not matter.
+ *
+ * `koffi.decode(address, 'str16')` is not the shortcut it looks like: it
+ * reads a *pointer* at that address and follows it, while `address` is
+ * already the string itself. That double dereference faults on Windows.
+ *
+ * @param koffi - the loaded koffi module.
+ * @param address - the raw address a `_Out_ void **` out-param surfaced.
+ * @returns the decoded string, empty when the first unit is the terminator.
  */
 function readUtf16(koffi: Koffi, address: unknown): string {
-  const bytes = Buffer.from(koffi.view(address, 32768))
-  let end = 0
-  while (end + 1 < bytes.length && bytes[end] !== 0) end += 2
-  return bytes.toString('utf16le', 0, end)
+  let text = ''
+  for (let index = 0; index < MAX_PATH_UNITS; index += 1) {
+    const unit = koffi.decode(address, index * 2, 'char16_t') as number
+    if (unit === 0) break
+    text += String.fromCharCode(unit)
+  }
+  return text
 }
 
 const COINIT_APARTMENTTHREADED = 0x2

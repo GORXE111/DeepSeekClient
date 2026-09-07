@@ -18,7 +18,14 @@ export interface Win32DialogWorkerLike {
    */
   on(event: 'message', listener: (message: Win32DialogWorkerMessage) => void): unknown
   on(event: 'error', listener: (error: Error) => void): unknown
-  on(event: 'exit', listener: (code: number) => void): unknown
+  on(event: 'exit', listener: (code: number | null, signal: string | null) => void): unknown
+  /**
+   * The child's captured stderr, when the spawn piped it. A child that dies
+   * before it can report — a module that fails to load, a native fault —
+   * says why here and nowhere else, so the driver quotes it in the exit
+   * rejection. Optional because the driver's fakes have no streams.
+   */
+  readonly stderr?: { on(event: 'data', listener: (chunk: unknown) => void): unknown } | null
   /**
    * Force-stop the child; the abort path's last resort when `WM_CLOSE`
    * never lands (e.g. the dialog window was never created).
@@ -50,6 +57,39 @@ const CLOSE_RETRY_MS = 150
 /** Abort-service attempts before force-terminating the worker. */
 const CLOSE_MAX_ATTEMPTS = 20
 
+/**
+ * How much of the child's stderr to keep for the exit message.
+ *
+ * A cap rather than the whole stream: this text ends up in an RPC error the
+ * UI shows, and an unbounded child could otherwise push a megabyte of noise
+ * through it. The tail is the part worth having — the last thing a dying
+ * process says is why it died.
+ */
+const STDERR_KEEP_BYTES = 2000
+
+/**
+ * Describe how a child ended, for an exit that never reported a result.
+ *
+ * Worth spelling out because the three endings need different answers and
+ * the bare "it exited" cannot tell them apart: a non-zero `code` is the
+ * child's own startup failure (its stderr says which), a `signal` is
+ * somebody else killing it, and on Windows a large code is a native fault
+ * (`0xc0000005` is an access violation) — usually a shell extension loaded
+ * into the dialog, not this process's own code.
+ *
+ * @param code - the child's exit code, or null when a signal ended it.
+ * @param signal - the terminating signal, or null on a normal exit.
+ * @param stderr - whatever the child wrote to stderr before dying.
+ * @returns the parenthesised detail appended to the exit message.
+ */
+function exitDetail(code: number | null, signal: string | null, stderr: string): string {
+  const how = signal !== null && signal !== ''
+    ? `killed by ${signal}`
+    : `exit code ${code ?? 'unknown'}${typeof code === 'number' && code > 0xffff ? ` (0x${(code >>> 0).toString(16)})` : ''}`
+  const said = stderr.trim()
+  return said === '' ? ` (${how})` : ` (${how}): ${said}`
+}
+
 /** Fail loudly if the closed worker-to-driver union gains an unhandled member. */
 /* v8 ignore start -- closed-union backstop; unreachable without a TypeScript contract violation */
 function assertNever(value: never): never {
@@ -73,6 +113,14 @@ export async function pickWin32Directory(
   const closeRetryMs = internals.closeRetryMs ?? CLOSE_RETRY_MS
 
   const worker: Win32DialogWorkerLike = spawnWorker({ title: DIALOG_TITLE })
+  // Kept for the exit path only. Without it a child that dies before saying
+  // anything reports nothing but the fact that it died — and in a packaged
+  // GUI host, where the inherited stderr goes nowhere, that was the whole
+  // record of the failure.
+  let stderr = ''
+  worker.stderr?.on('data', (chunk: unknown) => {
+    stderr = (stderr + String(chunk)).slice(-STDERR_KEEP_BYTES)
+  })
   let dialogThreadId: number | undefined
   let closeTimer: NodeJS.Timeout | undefined
   let settled = false
@@ -150,9 +198,11 @@ export async function pickWin32Directory(
         reject(error)
       })
     })
-    worker.on('exit', () => {
+    worker.on('exit', (code: number | null, signal: string | null) => {
       settle(() => {
-        reject(new Error('win32 folder dialog worker exited before reporting a result'))
+        reject(new Error(
+          `win32 folder dialog worker exited before reporting a result${exitDetail(code, signal, stderr)}`,
+        ))
       })
     })
   })

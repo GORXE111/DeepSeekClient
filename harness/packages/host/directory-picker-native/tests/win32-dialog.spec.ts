@@ -13,6 +13,8 @@ import type { Win32DialogWorkerMessage } from '../src/win32-dialog-worker.ts'
 
 class FakeWorker extends EventEmitter implements Win32DialogWorkerLike {
   kill = vi.fn(() => true)
+  /** The piped stderr the real spawn provides; the driver quotes its tail. */
+  readonly stderr = new EventEmitter() as EventEmitter & NonNullable<Win32DialogWorkerLike['stderr']>
   post(message: Win32DialogWorkerMessage): void {
     this.emit('message', message)
   }
@@ -69,15 +71,51 @@ describe('pickWin32Directory', () => {
 
     const silent = harness()
     const exiting = pickWin32Directory(live(), silent.internals)
-    silent.worker.emit('exit', 0)
+    silent.worker.emit('exit', 0, null)
     await expect(exiting).rejects.toThrow('exited before reporting a result')
+  })
+
+  it('says how a silent exit ended, and quotes what the child said', async () => {
+    // "It exited" cannot tell a failed start from a kill from a native fault,
+    // and those need different answers; in a packaged GUI host the child's
+    // stderr went nowhere, so this message was the whole record.
+    const failed = harness()
+    const failing = pickWin32Directory(live(), failed.internals)
+    failed.worker.stderr.emit('data', 'Error: Cannot find module worker.cjs')
+    failed.worker.emit('exit', 1, null)
+    await expect(failing).rejects.toThrow(
+      'exited before reporting a result (exit code 1): Error: Cannot find module worker.cjs',
+    )
+
+    const signalled = harness()
+    const killed = pickWin32Directory(live(), signalled.internals)
+    signalled.worker.emit('exit', null, 'SIGKILL')
+    await expect(killed).rejects.toThrow('exited before reporting a result (killed by SIGKILL)')
+
+    // A Windows native fault arrives as a large exit code; the hex is the form
+    // a reader recognises (0xc0000005 is an access violation).
+    const faulted = harness()
+    const faulting = pickWin32Directory(live(), faulted.internals)
+    faulted.worker.emit('exit', 0xc0000005, null)
+    await expect(faulting).rejects.toThrow('(exit code 3221225477 (0xc0000005))')
+
+    // Only the tail is kept: this text ends up in an RPC error the UI shows.
+    const noisy = harness()
+    const said = pickWin32Directory(live(), noisy.internals).catch((error: Error) => error.message)
+    noisy.worker.stderr.emit('data', 'x'.repeat(3000) + 'THE-LAST-WORD')
+    noisy.worker.emit('exit', 1, null)
+    // The pick resolves `string | null`, so the caught-message union carries a
+    // null the reject path never produces.
+    const message = await said ?? ''
+    expect(message).toContain('THE-LAST-WORD')
+    expect(message.length).toBeLessThan(2500)
   })
 
   it('settles once: a late exit after the result is inert', async () => {
     const { worker, internals } = harness()
     const picked = pickWin32Directory(live(), internals)
     worker.post({ kind: 'done', path: 'C:\\once' })
-    worker.emit('exit', 0)
+    worker.emit('exit', 0, null)
     await expect(picked).resolves.toBe('C:\\once')
   })
 
